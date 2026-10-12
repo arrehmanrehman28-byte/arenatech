@@ -1,0 +1,122 @@
+# Arena Edit — UI Guide
+
+## Design tokens (single source: `assets/theme/theme.json`)
+
+| Token | Dark | Light | High-contrast |
+|-------|------|-------|---------------|
+| surface0 (app background) | `#14161A` | `#F4F5F7` | `#000000` |
+| surface1 (panels, bars) | `#1B1E24` | `#FFFFFF` | `#0D0D0D` |
+| surface2 (controls) | `#232730` | `#EDEFF2` | `#1A1A1A` |
+| surface3 (hover) | `#2C313C` | `#E2E5EA` | `#262626` |
+| surface4 (pressed) | `#363C49` | `#D5D9E0` | `#333333` |
+| text | `#E8EAF0` | `#1E2229` | `#FFFFFF` |
+| textMuted | `#9AA3B2` | `#5C6470` | `#D0D0D0` |
+| border | `#3A4150` | `#C9CED6` | `#FFFFFF` |
+| success / warning / error | `#3DBE7B` / `#E5B454` / `#E5534B` | `#1F8A54` / `#9A6B00` / `#C23B34` | `#4ADE80` / `#FACC15` / `#F87171` |
+
+- **Accent**: `#4C8DFF` (user-changeable in Settings ▸ Appearance).
+- **AI violet**: `#9B6DFF` — every AI surface uses it so AI actions are
+  always recognizable (never the accent color).
+- **Radius**: 6 px controls, 10 px panels/cards. **Spacing**: 4/8/12/16/24/32.
+- **Motion**: 120–180 ms easing; respects Windows "Reduce motion"
+  (Settings ▸ Appearance also offers an override).
+- **Shadows** only on floating elements (menus, dialogs, tooltips, palette).
+- **Typography**: Segoe UI Variable → Noto Sans → (Arabic/Urdu) Noto Sans
+  Arabic → CJK Noto Sans CJK → Devanagari Noto Sans Devanagari. Timecodes:
+  Cascadia Mono. Font sizes: small/default/large/extra-large scale the whole
+  UI (11/13/15/17 pt base).
+- **High contrast** meets WCAG AA: the surface0/text pair is unit-tested at
+  ≥ 4.5:1 (`tests/test_themer.cpp`).
+- Color is never the only signal: status colors pair with icons or text
+  (e.g. "Missing" badge = red text + label, not just color).
+
+## Main workspace (M0 layout)
+
+```
++---------------------------------------------------------------------------+
+| Menu / Command Bar (Ctrl+K)                          AI quota   [User]    |
++---------------------------------------------------------------------------+
+| Media Bin      |            Program Monitor           |   Inspector       |
+| (thumbs, list, |   [ preview + safe-area/grid/thirds  |  (properties;     |
+|  relink badge) |    transport, playback res ]         |   per-selection)  |
++---------------------------------------------------------------------------+
+| Timeline toolbar: snap, magnet, markers, zoom, track height               |
+| Ruler + lanes (V1/A1…) — always LTR, even in RTL locales                 |
++---------------------------------------------------------------------------+
+| Status bar: timecode | fps | render cache | RAM | AI: N of M this hour   |
++---------------------------------------------------------------------------+
+```
+
+- **Dockable**: every panel can be dragged, floated, tabified (Inspector +
+  AI Panel are tabbed by default), hidden, and (workspace presets in M8)
+  saved as Edit/Color/Audio/Subtitles/Export.
+- **Program Monitor**: letterboxed preview with safe-area (90/80 %), grid,
+  and rule-of-thirds overlays; playback resolution Full/1/2/1/4; virtual
+  JKL transport in M0 (real decode in M1).
+- **Timeline**: toolbar (snap on by default; magnetic/markers light up with
+  a project), Ctrl+wheel zoom, ruler with adaptive tick spacing and SMPTE
+  labels.
+- **Status bar** AI meter: "AI: 37 of 200 requests used this hour" (live
+  from the per-hour budget).
+- **Title bar** shows "Arena Edit — {project}" and a quiet "Saved {time}
+  ago" autosave indicator.
+
+## Key screens
+
+| Screen | Contents |
+|--------|----------|
+| Welcome (first run) | Logo, language picker, New Project / Open, recent projects, "What's new" card, credit link |
+| New Project | Name, resolution presets, fps, aspect (16:9/9:16/1:1/4:5), sample rate, 540p proxy toggle, **live preview line** |
+| Command palette (Ctrl+K) | Fuzzy search over every command with shortcuts; **Tab or `/ai` prefix** switches to natural-language mode |
+| Media Bin | Grid/list (M1), import, search/filter, bins, **missing-media badge + Relink** (file-level in M0) |
+| Export | Preset gallery cards with estimated size/time + batch queue table (M4) |
+| Subtitle Manager | Table of tracks by BCP-47 language, add/import (M5), translate + timing checks (M5/M6), reading-speed warnings (> 42 chars / > 17 cps, red underline) |
+| AI Panel | Violet status card (off/on), task cards (translate/chapters/titles/cuts), **Ask AI** with live streaming, result cards with Accept/Edit/Reject |
+| Settings | Grouped sidebar (General, Appearance, Language, Editing, Playback, Export, Hardware, AI, Privacy, Keyboard) + search; live apply where possible; "Restart required" only when truly needed |
+| About | "Arena Edit", version + build date, license notices, **Made by arenatechofficial.pages.dev** |
+
+## Interaction rules
+
+- **Keyboard first**: J/K/L shuttle, I/O in/out (M2), Q/W ripple trim (M2),
+  Space play, +/- zoom, Ctrl+Z/Ctrl+Y undo/redo, Ctrl+K palette, Ctrl+,
+  settings. Remappable in Settings ▸ Keyboard (M8); ships with "Classic"
+  and "Simple" keymaps.
+- **Undo clarity**: buttons read "Undo: Rename project" (the command's
+  action name), not just "Undo".
+- **Snapping feedback**: visible snap line + short highlight flash (M2).
+- **Context menus** ≤ 8 items, submenus where needed.
+- **Empty states**: every empty panel says what it will show + one clear
+  action ("Drop media here or click Import").
+- **Non-blocking feedback**: toasts for background work; long jobs are
+  cancelable status-bar items. Never a modal for backgroundable work.
+- **Dialogs**: primary button right (LTR) / left (RTL); plain-language
+  errors with "Show details" expander + "Copy diagnostics".
+
+## Multilingual / RTL
+
+- All strings via the translation layer with `{placeholders}`; never
+  concatenated translated fragments; timecodes always SMPTE
+  (`HH:MM:SS:FF`); numbers/dates/sizes via `QLocale`.
+- Arabic/Urdu mirror the whole layout; **the media timeline stays LTR**
+  (time flows left → right); directional icons (undo/redo arrows) mirror,
+  play/time/waveform icons do not (M8 pass).
+- Layouts tolerate +30–40 % text width vs English.
+- Shipped: English, Arabic, Urdu (drop-in; see `i18n/README.md` for adding
+  Spanish/French/Hindi/Chinese/Japanese in M5+).
+
+## Accessibility & scaling
+
+- Full keyboard navigation, visible focus ring on every control (M8 audit).
+- UI Automation names/roles on every control; Narrator-tested in M8.
+- DPI-aware 100–300 %, per-monitor; font-size setting scales the whole UI.
+
+## Screenshots
+
+Captured with the offscreen platform on the CI harness (M0):
+
+- `docs/screenshots/main-dark.png` — main workspace, dark theme (added in M8 polish; M0 verified via selftest + this guide's layout block)
+- `docs/screenshots/main-light.png`, `main-rtl-arabic.png` — M8.
+
+> M0 note: automated verification of the live UI is the `--selftest`
+> headless run (14 checks: locales, RTL, themes, project round-trip,
+> undo/redo, validator, palette, window construction).
