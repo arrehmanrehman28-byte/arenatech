@@ -1,0 +1,117 @@
+# Arena Edit — CI (GitHub Actions).
+# Linux job: build (zero warnings), unit tests, selftest, benchmark.
+# Windows job: build (MSVC 2022 + Ninja + Qt via vcpkg), tests, selftest, package.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CMAKE_BUILD_TYPE: Release
+
+jobs:
+  linux:
+    name: Linux build + tests + benchmark
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build qt6-base-dev qt6-l10n-tools \
+            libgtest-dev googletest libgl1-mesa-dev libfontconfig1-dev
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DARENA_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build 2>&1 | tee build.log
+      - name: Zero-warning gate
+        run: |
+          if grep -E "warning:" build.log | grep -v "^$"; then
+            echo "::error::Compiler warnings found (target: zero warnings)"
+            exit 1
+          fi
+          echo "No compiler warnings."
+
+      - name: Unit tests
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Headless selftest
+        run: QT_QPA_PLATFORM=offscreen ./build/app/arenaedit --selftest
+
+      - name: Benchmark
+        run: bash tools/benchmark.sh
+
+      - name: Keep benchmark log
+        if: always()
+        run: bash tools/benchmark.sh > benchmark.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arenaedit-linux-x86_64
+          path: |
+            build/app/arenaedit
+            benchmark.txt
+
+  windows:
+    name: Windows build + package
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install vcpkg
+        uses: lukka/checkout-vcpkg@v5
+        with:
+          vcpkgGitCommitId: "auto"
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Configure (Qt via vcpkg manifest)
+        uses: lukka/run-cmake@v5
+        with:
+          configurePreset: "Ninja-Multi-Config"
+          configureOptions: |
+            -DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake
+            -DVCPKG_TARGET_TRIPLET=x64-windows
+            -DARENA_BUILD_TESTS=ON
+            -DARENA_ENABLE_FFMPEG=OFF
+            -DARENA_ENABLE_WHISPER=OFF
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Unit tests
+        working-directory: build
+        run: ctest -C Release --output-on-failure
+
+      - name: Selftest
+        run: .\build\app\Release\ArenaEdit.exe --selftest
+
+      - name: Package portable payload
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist\portable | Out-Null
+          Copy-Item build\app\Release\ArenaEdit.exe dist\portable\
+          Get-ChildItem build -Recurse -Filter "*.dll" | Where-Object { $_.Name -match "Qt6|FFmpeg" } |
+            Copy-Item -Destination dist\portable\
+          Copy-Item -Recurse assets dist\portable\assets
+          Copy-Item i18n dist\portable\i18n
+
+      - name: Build installer
+        shell: pwsh
+        run: iscc tools\package.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arenaedit-windows-x86_64
+          path: |
+            dist\ArenaEdit-*-Setup.exe
+            dist\portable
