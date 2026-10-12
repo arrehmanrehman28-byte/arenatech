@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "00000000-0000-4000-8000-000000000001",
+  "name": "Sample Project",
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "aspect": "16:9",
+  "sampleRate": 48000,
+  "proxy": { "enabled": true, "height": 540 },
+  "tracks": [
+    { "id": "V1", "type": "video", "name": "V1", "collapsed": false, "clips": [
+      { "id": "clip-0001", "source": "sample/clip01.mp4", "in": 0, "out": 900, "offset": 0, "speed": 1, "enabled": true, "effects": {} }
+    ]},
+    { "id": "A1", "type": "audio", "name": "A1", "collapsed": false, "clips": [] },
+    { "id": "S1", "type": "subtitle", "name": "S1", "collapsed": false, "clips": [] }
+  ],
+  "markers": [
+    { "time": 0, "label": "Intro" },
+    { "time": 450, "label": "Main topic" }
+  ],
+  "subtitleTracks": [
+    { "id": "sub-en", "language": "en", "name": "sample_en" },
+    { "id": "sub-ur", "language": "ur", "name": "sample_ur" }
+  ]
+}
