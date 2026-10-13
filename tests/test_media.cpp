@@ -140,8 +140,12 @@ TEST(MediaProbe, MissingFileFlagged)
 
 TEST(RenderBoundary, HonestAvailability)
 {
-    // M0 has no compositor; the registry (the contract) is available.
-    EXPECT_FALSE(Compositor::isAvailable());
+    // M3: the deterministic software compositor is available everywhere;
+    // the GPU path (D3D11/OpenGL) is an honest no-op off the Windows build.
+    EXPECT_TRUE(Compositor::isAvailable());
+#if !defined(Q_OS_WIN)
+    EXPECT_FALSE(Compositor::isGpuAvailable());
+#endif
     EXPECT_GT(EffectRegistry::effectTypes().size(), 5);
     EXPECT_TRUE(EffectRegistry::isTransition("transition.cross_dissolve"));
     EXPECT_FALSE(EffectRegistry::isTransition("transform"));

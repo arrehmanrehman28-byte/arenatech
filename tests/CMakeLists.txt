@@ -3,6 +3,7 @@
 # explicit validator test.
 add_executable(arena_tests
     test_core.cpp
+    test_render.cpp
     test_i18n.cpp
     test_actions.cpp
     test_themer.cpp
