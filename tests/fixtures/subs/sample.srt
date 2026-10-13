@@ -1,0 +1,17 @@
+1
+00:00:00,000 --> 00:00:02,000
+Hello world
+
+2
+00:00:02,500 --> 00:00:05,000
+Second cue
+second line
+
+3
+00:00:05,000 --> 00:00:07,250
+Third cue with a few more words to read here
+
+4
+01:00:00,000 --> 01:00:02,500
+Hour cue
+

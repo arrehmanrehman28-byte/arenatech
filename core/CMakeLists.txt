@@ -7,6 +7,7 @@ add_library(arena_core STATIC
     logger.cpp
     autosave.cpp
     util.cpp
+    subtitles.cpp
 )
 target_include_directories(arena_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(arena_core PUBLIC Qt6::Core Qt6::Gui)

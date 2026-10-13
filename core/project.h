@@ -36,10 +36,20 @@ struct Marker {
     static Marker fromJson(const QJsonObject &o);
 };
 
+struct TimelineCue {
+    qint64 startFrame = 0;  // timeline frames (project fps)
+    qint64 endFrame = 0;    // exclusive
+    QString text;           // may contain \n for multi-line captions
+    QJsonObject toJson() const;
+    static TimelineCue fromJson(const QJsonObject &o);
+};
+
 struct SubtitleTrack {
     QString id;
     QString language;      // BCP-47, e.g. "en", "ur", "ar"
     QString name;
+    bool burnIn = false;   // M5: render onto exported frames
+    QList<TimelineCue> cues;
     QJsonObject toJson() const;
     static SubtitleTrack fromJson(const QJsonObject &o);
 };

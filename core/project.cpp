@@ -44,10 +44,33 @@ Marker Marker::fromJson(const QJsonObject &o)
     return m;
 }
 
+QJsonObject TimelineCue::toJson() const
+{
+    return {{QStringLiteral("startFrame"), startFrame},
+            {QStringLiteral("endFrame"), endFrame},
+            {QStringLiteral("text"), text}};
+}
+TimelineCue TimelineCue::fromJson(const QJsonObject &o)
+{
+    TimelineCue c;
+    c.startFrame = o.value(QStringLiteral("startFrame")).toVariant().toLongLong();
+    c.endFrame = o.value(QStringLiteral("endFrame")).toVariant().toLongLong();
+    c.text = o.value(QStringLiteral("text")).toString();
+    return c;
+}
+
 QJsonObject SubtitleTrack::toJson() const
 {
-    return {{QStringLiteral("id"), id}, {QStringLiteral("language"), language},
-            {QStringLiteral("name"), name}};
+    QJsonObject o;
+    o.insert(QStringLiteral("id"), id);
+    o.insert(QStringLiteral("language"), language);
+    o.insert(QStringLiteral("name"), name);
+    o.insert(QStringLiteral("burnIn"), burnIn);
+    QJsonArray cuesArr;
+    for (const TimelineCue &c : cues)
+        cuesArr.append(c.toJson());
+    o.insert(QStringLiteral("cues"), cuesArr);
+    return o;
 }
 SubtitleTrack SubtitleTrack::fromJson(const QJsonObject &o)
 {
@@ -55,6 +78,9 @@ SubtitleTrack SubtitleTrack::fromJson(const QJsonObject &o)
     t.id = o.value(QStringLiteral("id")).toString();
     t.language = o.value(QStringLiteral("language")).toString();
     t.name = o.value(QStringLiteral("name")).toString();
+    t.burnIn = o.value(QStringLiteral("burnIn")).toBool(false);
+    for (const QJsonValue &v : o.value(QStringLiteral("cues")).toArray())
+        t.cues.append(TimelineCue::fromJson(v.toObject()));
     return t;
 }
 
