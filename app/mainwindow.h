@@ -55,6 +55,7 @@ public:
     QString projectPath() const { return m_projectPath; }
     Project *project() const { return m_project ? m_project.get() : nullptr; }
     TimelineWidget *timeline() const { return m_timeline; }
+    SubtitlesWidget *subtitles() const { return m_subtitles; }
     QString selectedClipId() const { return m_selectedClip; }
     void undo() { m_undoStack.undo(); }
     void redo() { m_undoStack.redo(); }
@@ -74,6 +75,9 @@ public:
     void openExportDialog();
     void togglePlayback();
     void seekToFrame(qint64 frame);
+    // M3: re-render the monitor frame at the current playhead (synchronous;
+    // also used to re-apply the playback resolution after a seek).
+    void applyPlaybackResolution();
     QImage previewImage() const;
     // Probe result for an imported file (default-constructed until probed).
     MediaInfo mediaInfo(const QString &path) const;
@@ -124,7 +128,6 @@ private:
     // engine just decoded for the current source (reused by the fetcher);
     // falls back to the plain source frame when no clip has effects.
     QImage renderProjectFrame(qint64 frame, const QImage &srcFrame) const;
-    void applyPlaybackResolution();
     void onEnginePosition(double sec);
     void onEngineEnded();
     void onPlayStateChanged(bool playing);

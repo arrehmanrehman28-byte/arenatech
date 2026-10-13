@@ -5,6 +5,7 @@
 #include <QImage>
 #include <QLabel>
 #include <QListWidget>
+#include <QTableWidget>
 #include <QTreeWidget>
 #include <QVector>
 #include <QComboBox>
@@ -15,6 +16,7 @@
 #include <QFormLayout>
 
 #include "media.h"
+#include "project.h"
 
 namespace arena {
 
@@ -138,24 +140,48 @@ private:
     QWidget *m_content;
 };
 
+// M5.3: full subtitle manager — track CRUD, SRT/VTT/ASS import/export,
+// burn-in toggle, cue table with SMPTE time codes and reading-speed
+// warnings (flagged cues are underlined + tinted). Mutates the project
+// directly and emits subtitlesChanged() after every change (autosave).
 class SubtitlesWidget : public QWidget {
     Q_OBJECT
 public:
     explicit SubtitlesWidget(QWidget *parent = nullptr);
     void retranslateUi();
-    void addTrack(const QString &name, const QString &bcp47);
-    void clearTracks();
+    // Attach/detach the project this panel edits (nullptr = no project).
+    void setProject(Project *project);
 
 signals:
-    void trackAdded(const QString &name, const QString &bcp47);
+    void subtitlesChanged();
 
 private:
+    void rebuildTracks();
+    void rebuildCues();
     void addTrackDialog();
-    QTreeWidget *m_tree;
+    void importTrack();
+    void exportCurrentTrack();
+    void deleteCurrentTrack();
+    void addCue();
+    void deleteCue();
+    void editCue(int row);
+    SubtitleTrack *currentTrack();
+    int currentTrackIndex() const;
+
+    Project *m_project = nullptr;
+    double m_fps = 30.0;
+    QTreeWidget *m_tree = nullptr;
+    QTableWidget *m_cues = nullptr;
+    QLabel *m_hint = nullptr;
+    QPushButton *m_addTrack = nullptr;
+    QPushButton *m_import = nullptr;
+    QPushButton *m_export = nullptr;
+    QPushButton *m_deleteTrack = nullptr;
+    QPushButton *m_addCue = nullptr;
+    QPushButton *m_deleteCue = nullptr;
     QWidget *m_empty = nullptr;
     QLabel *m_emptyTitle;
     QLabel *m_emptyBody;
-    QPushButton *m_add;
 };
 
 } // namespace arena

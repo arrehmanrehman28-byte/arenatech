@@ -418,6 +418,67 @@ int main(int argc, char **argv)
         spin(50);
     }
 
+    // --- M5: subtitle panel + burn-in end-to-end ---------------------------
+    check(w.subtitles() != nullptr, "M5: subtitles panel exists");
+    if (w.subtitles() && w.project()) {
+        // Panel re-attach + refresh path.
+        w.subtitles()->setProject(w.project());
+        spin(50);
+        check(w.subtitles()->parentWidget() != nullptr, "M5: panel attached to dock");
+
+        // Burn-in cue across the whole clip, then compare the monitor frame
+        // with and without burn-in at the same playhead.
+        SubtitleTrack st;
+        st.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        st.name = QStringLiteral("burnin");
+        st.language = QStringLiteral("en");
+        st.burnIn = true;
+        TimelineCue cue;
+        cue.startFrame = 0;
+        cue.endFrame = 120;
+        cue.text = QStringLiteral("ARENA BURNIN TEST");
+        st.cues.append(cue);
+        w.project()->subtitleTracks.append(st);
+        w.subtitles()->setProject(w.project());
+
+        // Seek + synchronous re-render at the playhead (same pattern as the
+        // M3.4 resolution checks — the engine is paused here, so frame
+        // delivery comes from applyPlaybackResolution, not playback).
+        w.seekToFrame(30);
+        for (int i = 0; i < 30; ++i) spin(50);
+        w.applyPlaybackResolution();
+        bool got = !w.previewImage().isNull();
+        check(got, "M5: preview frame renders with burn-in");
+        const QImage burned = w.previewImage();
+
+        w.project()->subtitleTracks.last().burnIn = false;
+        w.subtitles()->setProject(w.project());
+        w.seekToFrame(30);
+        for (int i = 0; i < 30; ++i) spin(50);
+        w.applyPlaybackResolution();
+        const QImage plain = w.previewImage();
+
+        // The burn-in pass composites onto the project canvas (1920x1080)
+        // while the plain pass may use the fast path at native source
+        // resolution — normalize before diffing.
+        QImage burnedCmp = burned;
+        if (!burnedCmp.isNull() && !plain.isNull() && burnedCmp.size() != plain.size())
+            burnedCmp = burnedCmp.scaled(plain.size(), Qt::IgnoreAspectRatio,
+                                         Qt::SmoothTransformation);
+        int diffs = 0;
+        if (!burnedCmp.isNull() && !plain.isNull()) {
+            for (int y = 0; y < burnedCmp.height() && diffs < 5; ++y)
+                for (int x = 0; x < burnedCmp.width() && diffs < 5; ++x)
+                    if (burnedCmp.pixel(x, y) != plain.pixel(x, y)) ++diffs;
+        }
+        check(diffs > 0, "M5: burn-in changes monitor pixels");
+
+        // Cleanup: no subtitle tracks left in the project.
+        w.project()->subtitleTracks.clear();
+        w.subtitles()->setProject(w.project());
+        spin(50);
+    }
+
     if (g_failures == 0) {
         printf("GUISOKE PASS\n");
         return 0;

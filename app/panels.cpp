@@ -1,5 +1,7 @@
 #include "panels.h"
+#include "dialogs.h"
 #include "i18n.h"
+#include "subtitles.h"
 #include "util.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -8,7 +10,11 @@
 #include <QHeaderView>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QMenu>
+#include <QMessageBox>
+#include <QPlainTextEdit>
+#include <QUuid>
 #include <QApplication>
 #include <QStyle>
 
@@ -523,28 +529,83 @@ void InspectorWidget::clearSelection()
     m_empty->show();
 }
 
-// --- SubtitlesWidget ---------------------------------------------------------
+// --- SubtitlesWidget (M5.3: full CRUD + import/export + burn-in) ----------
+namespace {
+// BCP-47 choices for new/imported tracks (the eight supported UI languages
+// + "und" for unknown).
+const QStringList kSubtitleLanguages = {
+    QStringLiteral("en"), QStringLiteral("ur"), QStringLiteral("ar"),
+    QStringLiteral("es"), QStringLiteral("fr"), QStringLiteral("hi"),
+    QStringLiteral("zh"), QStringLiteral("ja"), QStringLiteral("und")};
+
+bool validTimecode(const QString &tc)
+{
+    return tc.split(QLatin1Char(':'), Qt::SkipEmptyParts).size() == 4;
+}
+} // namespace
 
 SubtitlesWidget::SubtitlesWidget(QWidget *parent) : QWidget(parent)
 {
     auto *lay = new QVBoxLayout(this);
-    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setContentsMargins(8, 8, 8, 8);
     lay->setSpacing(8);
 
     m_tree = new QTreeWidget;
     m_tree->setColumnCount(3);
     m_tree->setHeaderLabels({arenaTr("panel.subtitles.columnTrack"),
                              arenaTr("panel.subtitles.columnLang"),
-                             arenaTr("panel.subtitles.columnActions")});
+                             arenaTr("panel.subtitles.burnIn")});
     m_tree->setRootIsDecorated(false);
+    m_tree->setSelectionBehavior(QAbstractItemView::SelectRows);
+    connect(m_tree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *it, int col) {
+        if (col != 2) return;
+        const int i = it->data(0, Qt::UserRole).toInt();
+        if (m_project && i >= 0 && i < m_project->subtitleTracks.size()) {
+            m_project->subtitleTracks[i].burnIn =
+                (it->checkState(2) == Qt::Checked);
+            emit subtitlesChanged();
+        }
+    });
+    connect(m_tree, &QTreeWidget::currentItemChanged, this, [this] { rebuildCues(); });
     lay->addWidget(m_tree, 1);
 
+    m_cues = new QTableWidget(0, 3);
+    m_cues->verticalHeader()->setVisible(false);
+    m_cues->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_cues->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_cues->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_cues->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_cues->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    m_cues->setMaximumHeight(180);
+    connect(m_cues, &QTableWidget::itemDoubleClicked, this,
+            [this](QTableWidgetItem *it) { editCue(m_cues->row(it)); });
+    lay->addWidget(m_cues, 1);
+
+    m_hint = new QLabel;
+    lay->addWidget(m_hint);
+
     auto *row = new QHBoxLayout;
-    m_add = new QPushButton(arenaTr("panel.subtitles.add"));
-    m_add->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    connect(m_add, &QPushButton::clicked, this, &SubtitlesWidget::addTrackDialog);
-    row->addWidget(m_add);
+    m_addTrack = new QPushButton(arenaTr("panel.subtitles.add"));
+    m_import = new QPushButton(arenaTr("panel.subtitles.import"));
+    m_deleteTrack = new QPushButton(arenaTr("panel.subtitles.deleteTrack"));
+    m_addCue = new QPushButton(arenaTr("panel.subtitles.addCue"));
+    m_deleteCue = new QPushButton(arenaTr("panel.subtitles.deleteCue"));
+    m_export = new QPushButton(arenaTr("panel.subtitles.export"));
+    for (QPushButton *b : {m_addTrack, m_import, m_deleteTrack, m_addCue, m_deleteCue, m_export})
+        b->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    connect(m_addTrack, &QPushButton::clicked, this, &SubtitlesWidget::addTrackDialog);
+    connect(m_import, &QPushButton::clicked, this, &SubtitlesWidget::importTrack);
+    connect(m_deleteTrack, &QPushButton::clicked, this, &SubtitlesWidget::deleteCurrentTrack);
+    connect(m_addCue, &QPushButton::clicked, this, &SubtitlesWidget::addCue);
+    connect(m_deleteCue, &QPushButton::clicked, this, &SubtitlesWidget::deleteCue);
+    connect(m_export, &QPushButton::clicked, this, &SubtitlesWidget::exportCurrentTrack);
+    row->addWidget(m_addTrack);
+    row->addWidget(m_import);
+    row->addWidget(m_deleteTrack);
     row->addStretch(1);
+    row->addWidget(m_addCue);
+    row->addWidget(m_deleteCue);
+    row->addWidget(m_export);
     lay->addLayout(row);
 
     QLabel *t = nullptr;
@@ -553,57 +614,327 @@ SubtitlesWidget::SubtitlesWidget(QWidget *parent) : QWidget(parent)
                              QStringLiteral("panel.subtitles.empty.body"), &t, &b);
     m_emptyTitle = t;
     m_emptyBody = b;
-    m_empty->show();
     lay->addWidget(m_empty, 1);
-    m_tree->hide();
-    m_add->hide();
+
+    setProject(nullptr);
 }
 
 void SubtitlesWidget::retranslateUi()
 {
     m_tree->setHeaderLabels({arenaTr("panel.subtitles.columnTrack"),
                              arenaTr("panel.subtitles.columnLang"),
-                             arenaTr("panel.subtitles.columnActions")});
-    m_add->setText(arenaTr("panel.subtitles.add"));
+                             arenaTr("panel.subtitles.burnIn")});
+    m_cues->setHorizontalHeaderLabels({arenaTr("panel.subtitles.columnStart"),
+                                       arenaTr("panel.subtitles.columnEnd"),
+                                       arenaTr("panel.subtitles.columnText")});
+    m_addTrack->setText(arenaTr("panel.subtitles.add"));
+    m_import->setText(arenaTr("panel.subtitles.import"));
+    m_deleteTrack->setText(arenaTr("panel.subtitles.deleteTrack"));
+    m_addCue->setText(arenaTr("panel.subtitles.addCue"));
+    m_deleteCue->setText(arenaTr("panel.subtitles.deleteCue"));
+    m_export->setText(arenaTr("panel.subtitles.export"));
     if (m_emptyTitle) m_emptyTitle->setText(arenaTr("panel.subtitles.empty.title"));
     if (m_emptyBody) m_emptyBody->setText(arenaTr("panel.subtitles.empty.body"));
+    rebuildCues(); // refresh hint / warning tooltips
 }
 
-void SubtitlesWidget::addTrack(const QString &name, const QString &bcp47)
+void SubtitlesWidget::setProject(Project *project)
 {
-    auto *item = new QTreeWidgetItem(m_tree);
-    item->setText(0, name);
-    item->setText(1, bcp47);
-    item->setText(2, arenaTr("panel.subtitles.export"));
-    m_tree->show();
-    m_add->show();
-    emit trackAdded(name, bcp47);
+    m_project = project;
+    m_fps = project ? project->fps : 30.0;
+    rebuildTracks();
+    rebuildCues();
 }
 
-void SubtitlesWidget::clearTracks()
+int SubtitlesWidget::currentTrackIndex() const
 {
+    QTreeWidgetItem *it = m_tree->currentItem();
+    return it ? it->data(0, Qt::UserRole).toInt() : -1;
+}
+
+SubtitleTrack *SubtitlesWidget::currentTrack()
+{
+    const int i = currentTrackIndex();
+    if (!m_project || i < 0 || i >= m_project->subtitleTracks.size()) return nullptr;
+    return &m_project->subtitleTracks[i];
+}
+
+void SubtitlesWidget::rebuildTracks()
+{
+    m_tree->blockSignals(true);
     m_tree->clear();
-    m_tree->hide();
-    m_add->hide();
-    if (m_empty) m_empty->show();
+    if (m_project) {
+        for (int i = 0; i < m_project->subtitleTracks.size(); ++i) {
+            const SubtitleTrack &st = m_project->subtitleTracks.at(i);
+            auto *item = new QTreeWidgetItem(m_tree);
+            item->setText(0, st.name);
+            item->setText(1, st.language);
+            item->setCheckState(2, st.burnIn ? Qt::Checked : Qt::Unchecked);
+            item->setData(0, Qt::UserRole, i);
+        }
+    }
+    m_tree->blockSignals(false);
+    const bool has = m_project != nullptr && !m_project->subtitleTracks.isEmpty();
+    m_tree->setVisible(has);
+    m_cues->setVisible(has);
+    if (m_empty) m_empty->setVisible(!has);
+    const bool sel = m_addTrack->isEnabled();
+    m_addTrack->setEnabled(m_project != nullptr);
+    m_import->setEnabled(m_project != nullptr);
+    m_deleteTrack->setEnabled(has);
+    m_export->setEnabled(has);
+    m_addCue->setEnabled(has);
+    m_deleteCue->setEnabled(has);
+    (void)sel;
+    if (has) m_tree->setCurrentItem(m_tree->topLevelItem(0));
+}
+
+void SubtitlesWidget::rebuildCues()
+{
+    m_cues->blockSignals(true);
+    m_cues->setRowCount(0);
+    SubtitleTrack *st = currentTrack();
+    if (st) {
+        m_cues->setRowCount(st->cues.size());
+        for (int i = 0; i < st->cues.size(); ++i) {
+            const TimelineCue &c = st->cues.at(i);
+            const double s = Subtitles::frameToSec(c.startFrame, m_fps);
+            const double e = Subtitles::frameToSec(c.endFrame, m_fps);
+            const Subtitles::CueWarning w = Subtitles::checkCue(c.text, s, e);
+            auto *start = new QTableWidgetItem(framesToTimecode(c.startFrame, m_fps));
+            auto *end = new QTableWidgetItem(framesToTimecode(c.endFrame, m_fps));
+            auto *text = new QTableWidgetItem(c.text);
+            start->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+            end->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+            text->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+            if (w.any()) {
+                // Flagged cues: underlined + tinted, with the reason in the
+                // tooltip (spec M5.3: reading-speed warnings).
+                QFont f = text->font();
+                f.setUnderline(true);
+                text->setFont(f);
+                text->setForeground(QColor(0xC0, 0x39, 0x2B));
+                QStringList msgs;
+                if (w.tooLong)
+                    msgs << arenaTr("panel.subtitles.warnLong",
+                                     {{QStringLiteral("n"), w.visibleChars}});
+                if (w.tooFast)
+                    msgs << arenaTr("panel.subtitles.warnFast",
+                                     {{QStringLiteral("cps"),
+                                       QString::number(w.cps, 'f', 1)}});
+                const QString tip = msgs.join(QStringLiteral(" · "));
+                start->setToolTip(tip);
+                end->setToolTip(tip);
+                text->setToolTip(tip);
+            }
+            m_cues->setItem(i, 0, start);
+            m_cues->setItem(i, 1, end);
+            m_cues->setItem(i, 2, text);
+        }
+    }
+    m_cues->blockSignals(false);
+    m_hint->setText(
+        st ? arenaTr("panel.subtitles.trackCueCount",
+                     {{QStringLiteral("name"), st->name},
+                      {QStringLiteral("n"), st->cues.size()}})
+           : arenaTr("panel.subtitles.noTrackSelected"));
 }
 
 void SubtitlesWidget::addTrackDialog()
 {
+    if (!m_project) return;
+    QDialog dlg(this);
+    dlg.setWindowTitle(arenaTr("dialog.subtitleTrack.title"));
+    auto *lay = new QFormLayout(&dlg);
+    auto *name = new QLineEdit;
+    auto *lang = new QComboBox;
+    lang->setEditable(true);
+    for (const QString &l : kSubtitleLanguages) lang->addItem(l);
+    lang->setCurrentText(QStringLiteral("en"));
+    auto *burn = new QCheckBox(arenaTr("dialog.subtitleTrack.burnIn"));
+    lay->addRow(arenaTr("dialog.subtitleTrack.name"), name);
+    lay->addRow(arenaTr("dialog.subtitleTrack.language"), lang);
+    lay->addRow(QString(), burn);
+    auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addRow(bb);
+    if (dlg.exec() != QDialog::Accepted || name->text().trimmed().isEmpty()) return;
+    SubtitleTrack st;
+    st.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    st.name = name->text().trimmed();
+    st.language = lang->currentText().trimmed();
+    st.burnIn = burn->isChecked();
+    m_project->subtitleTracks.append(st);
+    rebuildTracks();
+    emit subtitlesChanged();
+}
+
+void SubtitlesWidget::importTrack()
+{
+    if (!m_project) return;
     const QString f = QFileDialog::getOpenFileName(
-        this, arenaTr("panel.subtitles.add"), QString(),
+        this, arenaTr("panel.subtitles.import"), QString(),
         arenaTr("subtitles.filter"));
     if (f.isEmpty()) return;
-    QString lang = QStringLiteral("und");
-    if (f.endsWith(QLatin1String("_en"), Qt::CaseInsensitive) || f.endsWith(QLatin1String(".en."), Qt::CaseInsensitive))
-        lang = QStringLiteral("en");
-    auto *item = new QTreeWidgetItem(m_tree);
-    item->setText(0, QFileInfo(f).completeBaseName());
-    item->setText(1, lang);
-    item->setText(2, arenaTr("panel.subtitles.export"));
-    m_tree->show();
-    m_add->show();
-    emit trackAdded(QFileInfo(f).completeBaseName(), lang);
+    QFile file(f);
+    if (!file.open(QIODevice::ReadOnly)) {
+        ErrorDialog(arenaTr("error.cannotOpenFile"), f, this).exec();
+        return;
+    }
+    QString err;
+    QVector<SubtitleCue> cues;
+    if (!Subtitles::parse(QString::fromUtf8(file.readAll()),
+                          QFileInfo(f).fileName(), &cues, &err)) {
+        ErrorDialog(err, f, this).exec();
+        return;
+    }
+    bool ok = false;
+    const QString lang = QInputDialog::getItem(
+        this, arenaTr("dialog.subtitleTrack.language"),
+        arenaTr("dialog.subtitleTrack.language"), kSubtitleLanguages, 0, true, &ok);
+    if (!ok) return;
+    SubtitleTrack st;
+    st.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    st.name = QFileInfo(f).completeBaseName();
+    st.language = lang;
+    for (const SubtitleCue &c : cues) {
+        TimelineCue tc;
+        tc.startFrame = Subtitles::secToFrame(c.startSec, m_fps);
+        tc.endFrame = Subtitles::secToFrame(c.endSec, m_fps);
+        tc.text = c.text;
+        st.cues.append(tc);
+    }
+    m_project->subtitleTracks.append(st);
+    rebuildTracks();
+    emit subtitlesChanged();
+}
+
+void SubtitlesWidget::exportCurrentTrack()
+{
+    SubtitleTrack *st = currentTrack();
+    if (!st) return;
+    const QString f = QFileDialog::getSaveFileName(
+        this, arenaTr("panel.subtitles.export"),
+        st->name + QStringLiteral(".srt"), arenaTr("subtitles.filter"));
+    if (f.isEmpty()) return;
+    QVector<SubtitleCue> cues;
+    for (const TimelineCue &c : st->cues) {
+        SubtitleCue sc;
+        sc.startSec = Subtitles::frameToSec(c.startFrame, m_fps);
+        sc.endSec = Subtitles::frameToSec(c.endFrame, m_fps);
+        sc.text = c.text;
+        cues.append(sc);
+    }
+    const QString encoded = Subtitles::encode(cues, f);
+    QFile out(f);
+    if (!out.open(QIODevice::WriteOnly)) {
+        ErrorDialog(arenaTr("error.cannotOpenFile"), f, this).exec();
+        return;
+    }
+    out.write(encoded.toUtf8());
+}
+
+void SubtitlesWidget::deleteCurrentTrack()
+{
+    SubtitleTrack *st = currentTrack();
+    if (!st) return;
+    const int i = currentTrackIndex();
+    const auto ans = QMessageBox::question(
+        this, arenaTr("panel.subtitles.deleteTrack"),
+        arenaTr("panel.subtitles.deleteTrackConfirm",
+                {{QStringLiteral("name"), st->name}}),
+        QMessageBox::Yes | QMessageBox::No);
+    if (ans != QMessageBox::Yes) return;
+    m_project->subtitleTracks.removeAt(i);
+    rebuildTracks();
+    emit subtitlesChanged();
+}
+
+void SubtitlesWidget::addCue()
+{
+    SubtitleTrack *st = currentTrack();
+    if (!st) return;
+    TimelineCue tc;
+    tc.startFrame = st->cues.isEmpty()
+                        ? 0
+                        : st->cues.last().endFrame;
+    tc.endFrame = tc.startFrame + qMax(1, int(m_fps));
+    tc.text = arenaTr("panel.subtitles.defaultCueText");
+    st->cues.append(tc);
+    rebuildCues();
+    if (m_cues->rowCount() > 0)
+        m_cues->selectRow(m_cues->rowCount() - 1);
+    emit subtitlesChanged();
+}
+
+void SubtitlesWidget::deleteCue()
+{
+    SubtitleTrack *st = currentTrack();
+    if (!st) return;
+    const int row = m_cues->currentRow();
+    if (row < 0 || row >= st->cues.size()) return;
+    st->cues.removeAt(row);
+    rebuildCues();
+    emit subtitlesChanged();
+}
+
+void SubtitlesWidget::editCue(int row)
+{
+    SubtitleTrack *st = currentTrack();
+    if (!st || row < 0 || row >= st->cues.size()) return;
+    const TimelineCue c = st->cues.at(row);
+    QDialog dlg(this);
+    dlg.setWindowTitle(arenaTr("dialog.subtitleCue.title"));
+    auto *lay = new QFormLayout(&dlg);
+    auto *startEdit = new QLineEdit(framesToTimecode(c.startFrame, m_fps));
+    auto *endEdit = new QLineEdit(framesToTimecode(c.endFrame, m_fps));
+    auto *textEdit = new QPlainTextEdit(c.text);
+    textEdit->setFixedHeight(72);
+    auto *warn = new QLabel;
+    warn->setStyleSheet(QStringLiteral("color: #C0392B;"));
+    lay->addRow(arenaTr("dialog.subtitleCue.start"), startEdit);
+    lay->addRow(arenaTr("dialog.subtitleCue.end"), endEdit);
+    lay->addRow(arenaTr("dialog.subtitleCue.text"), textEdit);
+    lay->addRow(warn);
+    auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addRow(bb);
+
+    auto updateWarn = [this, warn, startEdit, endEdit, textEdit]() {
+        const double s =
+            Subtitles::frameToSec(timecodeToFrames(startEdit->text(), m_fps), m_fps);
+        double e = Subtitles::frameToSec(timecodeToFrames(endEdit->text(), m_fps), m_fps);
+        if (e <= s) e = s + 1.0 / m_fps;
+        const Subtitles::CueWarning w =
+            Subtitles::checkCue(textEdit->toPlainText(), s, e);
+        QStringList msgs;
+        if (w.tooLong)
+            msgs << arenaTr("panel.subtitles.warnLong", {{QStringLiteral("n"), w.visibleChars}});
+        if (w.tooFast)
+            msgs << arenaTr("panel.subtitles.warnFast",
+                            {{QStringLiteral("cps"), QString::number(w.cps, 'f', 1)}});
+        warn->setText(msgs.join(QStringLiteral(" · ")));
+        warn->setVisible(!msgs.isEmpty());
+    };
+    QObject::connect(startEdit, &QLineEdit::editingFinished, this, updateWarn);
+    QObject::connect(endEdit, &QLineEdit::editingFinished, this, updateWarn);
+    QObject::connect(textEdit, &QPlainTextEdit::textChanged, this, updateWarn);
+    updateWarn();
+
+    if (dlg.exec() != QDialog::Accepted) return;
+    if (!validTimecode(startEdit->text()) || !validTimecode(endEdit->text())) {
+        ErrorDialog(arenaTr("dialog.subtitleCue.invalidTimecode"), QString(), this).exec();
+        return;
+    }
+    TimelineCue &tc = st->cues[row];
+    tc.startFrame = timecodeToFrames(startEdit->text(), m_fps);
+    tc.endFrame = timecodeToFrames(endEdit->text(), m_fps);
+    tc.text = textEdit->toPlainText();
+    if (tc.endFrame <= tc.startFrame) tc.endFrame = tc.startFrame + 1;
+    rebuildCues();
+    emit subtitlesChanged();
 }
 
 } // namespace arena

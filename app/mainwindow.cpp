@@ -375,13 +375,8 @@ void MainWindow::buildDocks()
     subDock->setObjectName(QStringLiteral("SubtitlesDock"));
     subDock->setWidget(m_subtitles);
     addDockWidget(Qt::BottomDockWidgetArea, subDock);
-    connect(m_subtitles, &SubtitlesWidget::trackAdded, this, [this](const QString &name, const QString &bcp47) {
-        if (!m_project) return;
-        SubtitleTrack t;
-        t.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        t.name = name;
-        t.language = bcp47;
-        m_project->subtitleTracks.append(t);
+    // M5.3: the panel mutates the project directly; just mark it dirty.
+    connect(m_subtitles, &SubtitlesWidget::subtitlesChanged, this, [this] {
         m_autosave->setProjectChanged();
     });
 
@@ -563,7 +558,7 @@ bool MainWindow::newProject(const NewProjectResult &r)
     m_monitor->setFrame(QImage());
     m_waveform->setPeaks(QVector<Peak>());
     m_thumbs->setThumbs(QList<QImage>());
-    m_subtitles->clearTracks();
+    m_subtitles->setProject(m_project.get());
     m_autosave->setProjectPath(QString());
     refreshProjectViews();
     return true;
@@ -587,9 +582,7 @@ bool MainWindow::openProjectFile(const QString &path)
     m_monitor->setFrame(QImage());
     m_waveform->setPeaks(QVector<Peak>());
     m_thumbs->setThumbs(QList<QImage>());
-    m_subtitles->clearTracks();
-    for (const auto &st : p.subtitleTracks)
-        m_subtitles->addTrack(st.name, st.language);
+    m_subtitles->setProject(m_project.get());
     m_autosave->setProjectPath(path);
     checkRecoveryFor(path);
     refreshProjectViews();
@@ -611,6 +604,7 @@ void MainWindow::checkRecoveryFor(const QString &path)
         Project p = Project::loadFile(autoPath, &err);
         if (!p.id.isEmpty()) m_project = std::make_unique<Project>(p);
     }
+    m_subtitles->setProject(m_project.get());
     Autosave::clearRecovery(path);
     refreshProjectViews();
 }
@@ -653,7 +647,7 @@ void MainWindow::closeProject()
     m_monitor->setFrame(QImage());
     m_waveform->setPeaks(QVector<Peak>());
     m_thumbs->setThumbs(QList<QImage>());
-    m_subtitles->clearTracks();
+    m_subtitles->setProject(nullptr);
     m_autosave->setProjectPath(QString());
     refreshProjectViews();
 }
@@ -1367,7 +1361,8 @@ void MainWindow::applyPlaybackResolution()
 QImage MainWindow::renderProjectFrame(qint64 frame, const QImage &srcFrame) const
 {
     if (!m_project || srcFrame.isNull()) return srcFrame;
-    // Fast path: no clip on the project carries effects.
+    // Fast path: no clip carries effects AND no subtitle track is burned in
+    // (burn-in happens inside the compositor, so it forces the slow path).
     bool anyFx = false;
     for (const Track &t : m_project->tracks) {
         if (t.type != TrackType::Video) continue;
@@ -1379,7 +1374,10 @@ QImage MainWindow::renderProjectFrame(qint64 frame, const QImage &srcFrame) cons
         }
         if (anyFx) break;
     }
-    if (!anyFx) return scaleForPlayback(srcFrame, m_playbackScale);
+    bool anyBurnIn = false;
+    for (const SubtitleTrack &st : m_project->subtitleTracks)
+        if (st.burnIn) { anyBurnIn = true; break; }
+    if (!anyFx && !anyBurnIn) return scaleForPlayback(srcFrame, m_playbackScale);
 
     // Fetcher: decoded source frames, LRU-cached. The engine's current
     // source is decoded through the open engine (frame-accurate seek); any
