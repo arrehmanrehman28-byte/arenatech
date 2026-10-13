@@ -6,6 +6,8 @@
 #include <QString>
 #include <QStringList>
 
+#include "compositor.h" // the compositor lives here (M3)
+
 namespace arena {
 
 struct Effect {
@@ -18,19 +20,6 @@ public:
     // Minimum effect set from the spec (M3 implements these).
     static QStringList effectTypes();
     static bool isTransition(const QString &type);
-};
-
-class Compositor {
-public:
-    struct FrameRequest {
-        qint64 frame = 0;
-        double fps = 30.0;
-        int width = 1920;
-        int height = 1080;
-    };
-    // M3: D3D11 (preferred) / OpenGL compositing with an LRU frame cache
-    // (default 512 MB, configurable). Returns a handle, not a pixel copy.
-    static bool isAvailable() { return false; }
 };
 
 } // namespace arena
