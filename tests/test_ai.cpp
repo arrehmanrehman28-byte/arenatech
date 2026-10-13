@@ -229,14 +229,65 @@ TEST(AiFeatures, CutsRejections)
     EXPECT_FALSE(aifeatures::parseCuts(
         R"([{"start":"00:00:10:00","end":"00:00:12:00","reason":"silence","confidence":1.7}])",
         300.0, 30.0, &out, &err));
-    // Beyond video end.
+    // Beyond video end (end frame past the final frame).
     EXPECT_FALSE(aifeatures::parseCuts(
+        R"([{"start":"00:04:50:00","end":"00:05:00:15","reason":"silence","confidence":0.5}])",
+        300.0, 30.0, &out, &err));
+    // A tail cut ending exactly at the video end is valid: the cut command
+    // uses an exclusive end, so this removes up to and including the final
+    // frame (live finding 2026-10-13: models copy the trailing-silence
+    // range verbatim, which ends at EOF).
+    EXPECT_TRUE(aifeatures::parseCuts(
         R"([{"start":"00:04:50:00","end":"00:05:00:00","reason":"silence","confidence":0.5}])",
         300.0, 30.0, &out, &err));
     // Bad frame count (>= fps).
     EXPECT_FALSE(aifeatures::parseCuts(
         R"([{"start":"00:00:10:30","end":"00:00:12:00","reason":"silence","confidence":0.5}])",
         300.0, 30.0, &out, &err));
+}
+
+// --- format-echo robustness (live finding, 2026-10-13) ----------------------------
+// Reasoning models often restate the requested format as *valid* JSON inside
+// their chain-of-thought. The extractor must return the real (largest) answer,
+// not the tiny template echoed in the prose.
+
+TEST(AiFeatures, TranslationIgnoresEchoedTemplate)
+{
+    const QString raw =
+        QStringLiteral("I must output a JSON array of strings, e.g. [\"example\"]. ")
+        + kFence.arg(QStringLiteral(R"(["Good evening.", "Line two", "Спасибо"])"));
+    QStringList out;
+    QString err;
+    EXPECT_TRUE(aifeatures::parseTranslation(raw, 3, &out, &err));
+    ASSERT_EQ(out.size(), 3);
+    EXPECT_EQ(out[0], "Good evening.");
+}
+
+TEST(AiFeatures, TitleIgnoresEchoedTemplate)
+{
+    const QString raw =
+        QStringLiteral("The output is {\"title\":\"...\",\"description\":\"...\"}. ")
+        + kFence.arg(QStringLiteral(
+            R"({"title":"Editing in a Weekend","description":"We break down a full edit."})"));
+    TitleResult t;
+    QString err;
+    EXPECT_TRUE(aifeatures::parseTitle(raw, &t, &err));
+    EXPECT_EQ(t.title, "Editing in a Weekend");
+    EXPECT_EQ(t.description, "We break down a full edit.");
+}
+
+TEST(AiFeatures, CutsIgnoresEchoedTemplate)
+{
+    const QString raw = QStringLiteral(
+            "Format is [{\"start\":\"HH:MM:SSFF\",\"end\":\"HH:MM:SSFF\","
+            "\"reason\":\"silence|filler\",\"confidence\":0.0}]. ")
+        + kFence.arg(QStringLiteral(R"([{"start":"00:00:10:00","end":"00:00:12:15","reason":"silence","confidence":0.9}])"));
+    QVector<CutSuggestion> out;
+    QString err;
+    EXPECT_TRUE(aifeatures::parseCuts(raw, 300.0, 30.0, &out, &err));
+    ASSERT_EQ(out.size(), 1);
+    EXPECT_DOUBLE_EQ(out[0].startSec, 10.0);
+    EXPECT_EQ(out[0].reason, "silence");
 }
 
 // --- prompt builders --------------------------------------------------------------
@@ -263,8 +314,11 @@ TEST(AiFeatures, PromptBuildersSubstitutePlaceholders)
     EXPECT_EQ(t.indexOf(QStringLiteral("{context}")), -1);
 
     const QString k = aifeatures::cutsPrompt(QStringLiteral("00:00:01 hi"),
-                                              QStringLiteral("00:00:05-00:00:08 (3s)"));
+                                              QStringLiteral("00:00:05-00:00:08 (3s)"),
+                                              25.0);
     EXPECT_NE(k.indexOf(QStringLiteral("00:00:05-00:00:08 (3s)")), -1);
     EXPECT_EQ(k.indexOf(QStringLiteral("{silences}")), -1);
     EXPECT_EQ(k.indexOf(QStringLiteral("{transcript}")), -1);
+    // The frame-field rule is fps-specific (00-24 at 25 fps).
+    EXPECT_NE(k.indexOf(QStringLiteral("at 25 fps")), -1);
 }

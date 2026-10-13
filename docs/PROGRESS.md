@@ -3,6 +3,76 @@
 *Verified-phase log (working rule #2). Every entry: build clean (zero
 warnings) → tests → targeted checks → evidence.*
 
+## 2026-10-13 — M6 AI features: verified ✅
+
+**Scope delivered**
+
+- **M6.1 — offline parse/validate** (commit `cbeb644`):
+  `ai/aifeatures.{h,cpp}` — `batchRanges` (40/batch, exact cover),
+  `parseTranslation` (exactly N non-empty strings, same order),
+  `parseChapters` (3–10, non-decreasing `HH:MM:SS` ≤ duration, title ≤ 6
+  words), `parseTitle` (≤ 60 / ≤ 300), `parseCuts` (≤ 20, frame-exact
+  SMPTE, reason ∈ {silence, filler}, confidence ∈ [0,1]), prompt builders
+  with placeholder substitution; `parseClock` accepts `HH:MM:SS`,
+  `HH:MM:SS:FF` / `,FF` and fused `SSFF` variants. 11 unit tests;
+  99/99 ctest.
+- **M6.2 — GUI wiring** (commit `18a0778`): `AiPanel` runs the four tasks
+  + free-form "Ask AI" against `KiloClient` (streaming preview, per-task
+  result cards, Accept/Reject, **never auto-applied**); `MainWindow`
+  applies accepted results as undoable commands — translation → new
+  subtitle track cues, chapters → markers, title → project rename
+  (description shown only, no project field — D-023), cuts → per-cut
+  ripple deletes on the video primary track (D-024). 29 i18n keys × 8
+  catalogs (331 keys each); guismoke M6 checks. Also fixed the export
+  QThread teardown race found by guismoke (D-025). 99/99 ctest.
+- **M6.3 — live gateway session + docs** (this entry):
+  - `tools/arena_ai_live` dev driver: runs all four tasks against the live
+    gateway on a synthetic 45-cue, 30 fps, text-only session (batches of
+    40+5 with one failed-batch retry available), logs every prompt + raw
+    response to markdown, exits non-zero on any validation/network
+    failure. Model = CLI argument (default: last model verified stable);
+    settings isolated to a temp dir (D-031).
+  - **Recorded session, all four tasks green** (`exit 0`):
+    [`docs/live_sessions/m6_ai_live_session_2026-10-13.md`](live_sessions/m6_ai_live_session_2026-10-13.md)
+    — title 44 ch + description 177 ch; 7 chapters; 45/45 lines → Spanish
+    in 2 batches (40 + 5); 4 cuts (3 silences + the "um," filler at
+    `00:00:24:27 → 00:00:25:12`). Model: `nvidia/nemotron-3-super-120b-a12b:free`
+    (model-selection evidence in AI_INTEGRATION.md §8: `kilo-auto/free`
+    routed to a 503-overloaded upstream; `lfm-2.5-2.6b` dropped one of 40
+    entries; `ling-3.1-flash` 429).
+  - **Shipped bugs found only by the live run** (each with regression
+    tests): SSE `indexOf('\n')`-as-boolean dropped every line after the
+    first data line (D-026); flat 1500 `max_tokens` truncated
+    reasoning-model JSON (D-027); extractors returned the model's echoed
+    *format template* instead of the answer (D-028); cache served an
+    unparseable response to retries and delivered empty text on cache hit
+    (D-029); valid EOF-ending cuts rejected (D-030). Prompt hardening:
+    frame field < fps, end strictly after start, filler ≈ 0.5 s (the
+    model emitted frame 30 at 30 fps and zero-length filler cuts).
+  - Docs: `AI_INTEGRATION.md` §8 (recorded session + findings),
+    `DECISIONS.md` D-023…D-031, `TEST_REPORT.md` M6 addendum, PLAN M6
+    verified.
+
+**Verification**
+
+- Build: 100 % of targets, **0 warnings** (`-Wall -Wextra`).
+- ctest: **102/102** (M6.1/6.2: 99 → +3 format-echo regression tests;
+  cut EOF boundary expectation updated for D-030).
+- guismoke: 70 checks; 6/6 direct runs clean (offscreen).
+- Live: 4/4 tasks passed validation, **0 network errors**, recorded in
+  repo (above); app remains 100 % functional with AI disabled/offline
+  (no AI code path in core editing; `chat()` refuses locally when
+  disabled).
+
+**Not done / next**
+
+- NL command bar (M7, with STT/whisper) — `actionvalidator` + prompt
+  ready.
+- Project description field: product decision needed before the AI
+  description can be persisted (D-023).
+- Free-tier model quality varies per day; re-verify the driver default
+  when pinning changes (D-007, AI_INTEGRATION.md §8).
+
 ## 2026-10-13 — M5 Subtitles: verified ✅
 
 **Scope delivered**

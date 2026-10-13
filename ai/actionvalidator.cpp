@@ -111,30 +111,52 @@ ValidationResult validateActions(const QJsonArray &actions)
 
 QJsonArray extractJsonArray(const QString &rawModelText)
 {
-    const int start = rawModelText.indexOf(QLatin1Char('['));
-    if (start < 0) return {};
-    int depth = 0;
-    bool inString = false;
-    for (int i = start; i < rawModelText.size(); ++i) {
-        const QChar c = rawModelText.at(i);
-        if (inString) {
-            if (c == QLatin1Char('\\')) ++i;
-            else if (c == QLatin1Char('"')) inString = false;
-        } else if (c == QLatin1Char('"')) {
-            inString = true;
-        } else if (c == QLatin1Char('[')) {
-            ++depth;
-        } else if (c == QLatin1Char(']')) {
-            if (--depth == 0) {
-                QJsonParseError pe{};
-                QJsonDocument doc = QJsonDocument::fromJson(rawModelText.mid(start, i - start + 1).toUtf8(), &pe);
-                if (pe.error == QJsonParseError::NoError && doc.isArray())
-                    return doc.array();
-                return {};
+    // Reasoning models often echo the requested format in their
+    // chain-of-thought — sometimes as *valid* JSON (the format template
+    // itself, which can even be longer than a short real answer). The
+    // model's final answer is always the LAST structure it emits, so scan
+    // every balanced [...] candidate and keep the last one that parses as
+    // a JSON array. Downstream validation is the safety net if a model
+    // ever emits valid JSON after the answer.
+    int bestStart = -1, bestEnd = -1;
+    int from = 0;
+    while (from < rawModelText.size()) {
+        const int start = rawModelText.indexOf(QLatin1Char('['), from);
+        if (start < 0) break;
+        int depth = 0;
+        bool inString = false;
+        int end = -1;
+        for (int i = start; i < rawModelText.size(); ++i) {
+            const QChar c = rawModelText.at(i);
+            if (inString) {
+                if (c == QLatin1Char('\\')) ++i;
+                else if (c == QLatin1Char('"')) inString = false;
+            } else if (c == QLatin1Char('"')) {
+                inString = true;
+            } else if (c == QLatin1Char('[')) {
+                ++depth;
+            } else if (c == QLatin1Char(']')) {
+                if (--depth == 0) {
+                    end = i;
+                    break;
+                }
             }
         }
+        if (end < 0) break; // unbalanced — no more candidates
+        QJsonParseError pe{};
+        const QJsonDocument doc =
+            QJsonDocument::fromJson(rawModelText.mid(start, end - start + 1).toUtf8(), &pe);
+        if (pe.error == QJsonParseError::NoError && doc.isArray()) {
+            bestStart = start; // last valid candidate wins
+            bestEnd = end;
+        }
+        from = start + 1;
     }
-    return {};
+    if (bestStart < 0) return {};
+    QJsonParseError pe{};
+    const QJsonDocument doc =
+        QJsonDocument::fromJson(rawModelText.mid(bestStart, bestEnd - bestStart + 1).toUtf8(), &pe);
+    return doc.array();
 }
 
 } // namespace actionValidator

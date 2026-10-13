@@ -546,7 +546,7 @@ void AiPanel::runTask(AiTaskType type)
         const QString user = aifeatures::chaptersPrompt(transcriptLines().join('\n'));
         m_client->chat(kSystemPrompt, user,
                        [card](const QString &d) { card->appendStream(d); },
-                       [this, card, fps, durSec](const QString &full, const QString &err) {
+                       [this, card, user, fps, durSec](const QString &full, const QString &err) {
                            QVector<ChapterSuggestion> chapters;
                            QString verr;
                            if (err.isEmpty() &&
@@ -563,10 +563,12 @@ void AiPanel::runTask(AiTaskType type)
                                card->showPreview(p);
                                m_askSend->setEnabled(m_settings.aiEnabled());
                            } else {
+                               invalidateFor(user); // cached bad text blocks re-runs
                                card->markFailed(err.isEmpty() ? verr : err);
                                m_askSend->setEnabled(m_settings.aiEnabled());
                            }
-                       });
+                       },
+                       aifeatures::kChaptersMaxTokens);
         return;
     }
 
@@ -585,7 +587,7 @@ void AiPanel::runTask(AiTaskType type)
         const QString user = aifeatures::titlePrompt(context);
         m_client->chat(kSystemPrompt, user,
                        [card](const QString &d) { card->appendStream(d); },
-                       [this, card](const QString &full, const QString &err) {
+                       [this, card, user](const QString &full, const QString &err) {
                            TitleResult t;
                            QString verr;
                            if (err.isEmpty() && aifeatures::parseTitle(full, &t, &verr)) {
@@ -598,19 +600,21 @@ void AiPanel::runTask(AiTaskType type)
                                card->showPreview(p);
                                m_askSend->setEnabled(m_settings.aiEnabled());
                            } else {
+                               invalidateFor(user); // cached bad text blocks re-runs
                                card->markFailed(err.isEmpty() ? verr : err);
                                m_askSend->setEnabled(m_settings.aiEnabled());
                            }
-                       });
+                       },
+                       aifeatures::kTitleMaxTokens);
         return;
     }
 
     // Cuts.
     const QString user = aifeatures::cutsPrompt(transcriptLines().join('\n'),
-                                                silenceMapText());
+                                                silenceMapText(), fps);
     m_client->chat(kSystemPrompt, user,
                    [card](const QString &d) { card->appendStream(d); },
-                   [this, card, fps, durSec](const QString &full, const QString &err) {
+                   [this, card, user, fps, durSec](const QString &full, const QString &err) {
                        QVector<CutSuggestion> cuts;
                        QString verr;
                        if (err.isEmpty() &&
@@ -631,10 +635,18 @@ void AiPanel::runTask(AiTaskType type)
                            card->showPreview(p);
                            m_askSend->setEnabled(m_settings.aiEnabled());
                        } else {
+                           invalidateFor(user); // cached bad text blocks re-runs
                            card->markFailed(err.isEmpty() ? verr : err);
                            m_askSend->setEnabled(m_settings.aiEnabled());
                        }
-                   });
+                   },
+                   aifeatures::kCutsMaxTokens);
+}
+
+void AiPanel::invalidateFor(const QString &userPrompt)
+{
+    if (m_client)
+        m_client->invalidateCache(kSystemPrompt, userPrompt);
 }
 
 void AiPanel::runTranslateBatch(TaskResultCard *card, const QString &sourceTrackId,
@@ -678,7 +690,7 @@ void AiPanel::runTranslateBatch(TaskResultCard *card, const QString &sourceTrack
     const QString user = aifeatures::translatePrompt(entries, targetLang);
     m_client->chat(kSystemPrompt, user,
                    [card](const QString &d) { card->appendStream(d); },
-                   [this, card, sourceTrackId, targetLang, rangeIndex, first, last](
+                   [this, card, sourceTrackId, targetLang, rangeIndex, first, last, user](
                        const QString &full, const QString &err) {
                        QStringList batch;
                        QString verr;
@@ -691,15 +703,20 @@ void AiPanel::runTranslateBatch(TaskResultCard *card, const QString &sourceTrack
                            runTranslateBatch(card, sourceTrackId, targetLang, rangeIndex + 1);
                        } else if (!card->batchRetried(rangeIndex)) {
                            // One retry per batch; valid batches are never re-sent.
+                           // Drop the cached (unparseable) response first, or the
+                           // retry would be served from cache and fail again.
                            card->setBatchRetried(rangeIndex);
+                           invalidateFor(user);
                            runTranslateBatch(card, sourceTrackId, targetLang, rangeIndex);
                        } else {
+                           invalidateFor(user); // so a later re-run re-queries
                            card->markFailed(arenaTr(
                                "panel.ai.batch.failed",
                                {{QStringLiteral("n"), QString::number(rangeIndex + 1)}}));
                            m_askSend->setEnabled(m_settings.aiEnabled());
                        }
-                   });
+                   },
+                   aifeatures::kTranslateBatchMaxTokens);
 }
 
 void AiPanel::finishTranslation(TaskResultCard *card, const QString &sourceTrackId,

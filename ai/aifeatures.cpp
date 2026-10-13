@@ -31,38 +31,59 @@ int wordCount(const QString &s)
     return n;
 }
 
-// First balanced {...} object in raw text (string/escape aware).
+// Parseable balanced {...} object in raw text (string/escape aware).
+// Reasoning models often echo the requested format in their chain-of-thought
+// — sometimes as *valid* JSON (the template with "..." placeholders). The
+// model's final answer is always the LAST structure it emits, so scan every
+// balanced candidate and keep the last one that parses as a JSON object.
+// Downstream validation is the safety net if a model ever emits valid JSON
+// after the answer.
 bool extractJsonObject(const QString &raw, QJsonObject *out)
 {
-    const int start = raw.indexOf(QLatin1Char('{'));
-    if (start < 0) return false;
-    int depth = 0;
-    bool inStr = false;
-    bool esc = false;
-    for (int i = start; i < raw.size(); ++i) {
-        const QChar c = raw.at(i);
-        if (inStr) {
-            if (esc) esc = false;
-            else if (c == QLatin1Char('\\')) esc = true;
-            else if (c == QLatin1Char('"')) inStr = false;
-            continue;
-        }
-        if (c == QLatin1Char('"')) inStr = true;
-        else if (c == QLatin1Char('{')) ++depth;
-        else if (c == QLatin1Char('}')) {
-            --depth;
-            if (depth == 0) {
-                const QString obj = raw.mid(start, i - start + 1);
-                QJsonParseError perr;
-                const QJsonDocument doc = QJsonDocument::fromJson(obj.toUtf8(), &perr);
-                if (perr.error != QJsonParseError::NoError || !doc.isObject())
-                    return false;
-                *out = doc.object();
-                return true;
+    int bestStart = -1, bestEnd = -1;
+    int from = 0;
+    while (from < raw.size()) {
+        const int start = raw.indexOf(QLatin1Char('{'), from);
+        if (start < 0) break;
+        int depth = 0;
+        bool inStr = false;
+        bool esc = false;
+        int end = -1;
+        for (int i = start; i < raw.size(); ++i) {
+            const QChar c = raw.at(i);
+            if (inStr) {
+                if (esc) esc = false;
+                else if (c == QLatin1Char('\\')) esc = true;
+                else if (c == QLatin1Char('"')) inStr = false;
+                continue;
+            }
+            if (c == QLatin1Char('"')) inStr = true;
+            else if (c == QLatin1Char('{')) ++depth;
+            else if (c == QLatin1Char('}')) {
+                --depth;
+                if (depth == 0) {
+                    end = i;
+                    break;
+                }
             }
         }
+        if (end < 0) break; // unbalanced — no more candidates
+        QJsonParseError perr;
+        const QJsonDocument doc =
+            QJsonDocument::fromJson(raw.mid(start, end - start + 1).toUtf8(), &perr);
+        if (perr.error == QJsonParseError::NoError && doc.isObject()) {
+            bestStart = start; // last valid candidate wins
+            bestEnd = end;
+        }
+        from = start + 1;
     }
-    return false;
+    if (bestStart < 0) return false;
+    QJsonParseError perr;
+    const QJsonDocument doc =
+        QJsonDocument::fromJson(raw.mid(bestStart, bestEnd - bestStart + 1).toUtf8(), &perr);
+    if (perr.error != QJsonParseError::NoError || !doc.isObject()) return false;
+    *out = doc.object();
+    return true;
 }
 
 bool isFinite(double v) { return std::isfinite(v); }
@@ -218,11 +239,13 @@ bool parseCuts(const QString &raw, double durationSec, double fps,
         if (e <= s)
             return fail(QStringLiteral("cut %1 end is not after start").arg(i));
         if (fps > 0.0) {
-            // Frame-exact: the end timecode must point at a frame that exists.
-            // A cut ending on the first frame past the final frame is invalid.
+            // Frame-exact, and consistent with the cut command's EXCLUSIVE
+            // end (RippleRemoveRangeCommand deletes [start, end)): the end
+            // timecode may point at the first frame past the final frame —
+            // a tail cut that removes up to EOF — but not beyond it.
             const long long totalFrames = static_cast<long long>(qRound(durationSec * fps));
             const long long endFrame = static_cast<long long>(qRound(e * fps));
-            if (totalFrames > 0 && endFrame >= totalFrames)
+            if (totalFrames > 0 && endFrame > totalFrames)
                 return fail(QStringLiteral("cut %1 ends beyond video end").arg(i));
         } else if (e > durationSec + 0.001) {
             return fail(QStringLiteral("cut %1 ends beyond video end").arg(i));
@@ -263,11 +286,12 @@ QString titlePrompt(const QString &context)
     return p;
 }
 
-QString cutsPrompt(const QString &transcriptLines, const QString &silenceMap)
+QString cutsPrompt(const QString &transcriptLines, const QString &silenceMap, double fps)
 {
     QString p = prompts::suggestCuts();
     p.replace(QStringLiteral("{transcript}"), transcriptLines);
     p.replace(QStringLiteral("{silences}"), silenceMap);
+    p.replace(QStringLiteral("{fps}"), QString::number(fps, 'g', 3));
     return p;
 }
 

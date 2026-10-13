@@ -46,14 +46,20 @@ inline QString smartTitleAndDescription()
         "Context:\n{context}");
 }
 
-// {transcript} + {silences}. Output JSON array of suggested cuts:
+// {transcript} + {silences} + {fps}. Output JSON array of suggested cuts:
 // {"start":"HH:MM:SSFF","end":"HH:MM:SSFF","reason":"silence|filler","confidence":0.0-1.0}
+// The frame-field rule is stated explicitly: small models otherwise emit
+// frame 30 at 30 fps (live finding 2026-10-13, see AI_INTEGRATION.md).
 inline QString suggestCuts()
 {
     return QStringLiteral(
         "You are an edit assistant.\n"
         "Suggest cuts for filler words and long silences. Only suggest cuts that\n"
         "remove no meaningful content. Confidence must reflect certainty.\n"
+        "Timecodes are SMPTE HH:MM:SSFF at {fps} fps: the frame field is the part\n"
+        "after the last colon and must be lower than {fps} (00-29 at 30 fps).\n"
+        "Every end must be strictly after its start. For a filler word, make the\n"
+        "end cover roughly half a second from the start (the spoken word only).\n"
         "Output JSON only: [{\"start\":\"HH:MM:SSFF\",\"end\":\"HH:MM:SSFF\","
         "\"reason\":\"silence|filler\",\"confidence\":0.0}]\n"
         "Transcript:\n{transcript}\nSilence map:\n{silences}");

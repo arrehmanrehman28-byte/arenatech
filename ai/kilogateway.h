@@ -60,13 +60,20 @@ public:
     void setCurrentModel(const QString &id);
 
     // Chat (streaming). Queues concurrent calls; one active at a time.
+    // maxTokens caps generation; reasoning models spend it on chain-of-thought
+    // first, so structured-output callers pass per-task budgets (aifeatures).
     void chat(const QString &systemPrompt, const QString &userPrompt,
               std::function<void(const QString &)> onDelta,
-              std::function<void(const QString &fullText, const QString &error)> onDone);
+              std::function<void(const QString &fullText, const QString &error)> onDone,
+              int maxTokens = 1500);
     void cancel();
 
     // Key + cache
     bool apiKeyConfigured() const;
+    // Remove the cached response for one exact request. Call before
+    // resending a prompt whose previous response failed validation —
+    // otherwise the retry is served from cache and can never succeed.
+    void invalidateCache(const QString &systemPrompt, const QString &userPrompt);
     static QString cacheDirectory();
     static void clearCache();
     AIBudget &budget() { return m_budget; }
@@ -78,6 +85,7 @@ private:
     struct ChatCall {
         QString system;
         QString user;
+        int maxTokens = 1500;
         std::function<void(const QString &)> onDelta;
         std::function<void(const QString &, const QString &)> onDone;
         QByteArray buffer;
@@ -91,6 +99,8 @@ private:
     void sendChat(ChatCall *call);
     void onChatError(ChatCall *call, const QString &error, int httpStatus);
     void finishCall(ChatCall *call, const QString &error);
+    static QString cachePath(const QString &model, const QString &systemPrompt,
+                             const QString &userPrompt);
     bool cacheGet(const ChatCall &call, QString &out) const;
     void cachePut(const ChatCall &call, const QString &content);
 

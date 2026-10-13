@@ -149,3 +149,46 @@ New known limitations (M5):
   canvas/20 font size); per-track styling is deferred to M8 polish.
 - es/fr/hi/zh/ja translations are agent-authored and benefit from
   native-speaker review before M9 (same caveat as ur/ar, #11 above).
+## Addendum — M6 AI features (2026-10-13)
+
+Per-milestone verification evidence lives in `PROGRESS.md`; this report
+keeps the M0 snapshot above. Current totals after M6:
+
+- **ctest: 102/102 pass** (101 unit + guismoke), **0 warnings** on a clean
+  rebuild. Test count grew 88 → 99 (M6.1: 11 `AiFeatures.*` tests) → 102
+  (M6.3: 3 format-echo extraction regression tests; the cut EOF-boundary
+  expectation was corrected for D-030).
+- New suites (M6.1): `AiFeatures.BatchRangesCoverEverythingExactlyOnce`,
+  `ParseClockVariants`, `TranslationParsesFencedArray` / `TranslationRejections`,
+  `ChaptersParsesAndValidates` / `ChaptersRejections`, `TitleParsesAndValidates`
+  / `TitleRejections`, `CutsParsesAndValidates` / `CutsRejections`,
+  `PromptBuildersSubstitutePlaceholders`.
+- New suites (M6.3, from live findings): `TranslationIgnoresEchoedTemplate`,
+  `TitleIgnoresEchoedTemplate`, `CutsIgnoresEchoedTemplate` (extractors must
+  return the model's final answer, not the format template echoed in its
+  chain-of-thought — D-028).
+- guismoke: 70 checks including the M6 section (AI panel present, four
+  task cards, Accept applies an undoable edit, undo/redo round-trip);
+  6/6 direct offscreen runs clean.
+- **Live gateway session (recorded, in-repo):**
+  `docs/live_sessions/m6_ai_live_session_2026-10-13.md` — all four M6
+  tasks (title/description, 7 chapters, 45/45-line Spanish translation in
+  40+5 batches, 4 cut suggestions) passed offline validation against real
+  `nvidia/nemotron-3-super-120b-a12b:free` responses; 0 network errors;
+  driver exit 0. Model-selection evidence for the other free models
+  (`kilo-auto/free` 503, `lfm-2.5-2.6b` 39/40 entries, `ling-3.1-flash`
+  429) is in `AI_INTEGRATION.md` §8.
+
+New known limitations (M6):
+
+- Free-tier model quality varies by day and by model; the recorded session
+  used the model verified stable that day. The driver default and the
+  client's `auto` resolution can drift (D-007) — re-run
+  `tools/arena_ai_live` when pinning changes.
+- The AI **description** has no project field to persist into; Accept
+  applies the title (undoable project rename) only (D-023).
+- Cuts apply to the video primary track only; audio/subtitle tracks are
+  not auto-shifted (D-024).
+- The response cache stores the gateway's raw reply; a reply that fails
+  validation is invalidated before any resend (D-029), so a "retry" always
+  re-queries the gateway.

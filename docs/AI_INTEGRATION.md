@@ -187,7 +187,7 @@ Accept.
 | `translateSubtitles()` | Input: `{entries}` = JSON array of `{index,start,end,text}` (≈ 40 per batch), `{targetLang}` BCP-47. Output: JSON array of exactly N strings, same order; preserve line breaks and speaker tags. Client validates the returned count == N; a failed batch is retried **only** for the failed entries. |
 | `generateChapters()` | Input: `{transcript}` (`HH:MM:SSFF text` lines). Output: JSON array of 3–10 `{start:"HH:MM:SS", title}` (title ≤ 6 words, user's language). |
 | `smartTitleAndDescription()` | Input: `{context}` metadata. Output: `{"title"≤60 chars,"description"≤300 chars}` in the user's language. |
-| `suggestCuts()` | Input: `{transcript}` + `{silences}` silence map. Output: JSON array of `{start,end,reason:"silence\|filler",confidence:0..1}`. Each suggestion is an Accept/Reject card — **never auto-applied**. |
+| `suggestCuts()` | Input: `{transcript}` + `{silences}` silence map + `{fps}`. Output: JSON array of `{start,end,reason:"silence\|filler",confidence:0..1}`. Each suggestion is an Accept/Reject card — **never auto-applied**. |
 | `naturalLanguageToActions()` | Input: `{request}`. Output: JSON array of actions from the strict schema below. |
 
 ### Natural-language command schema (validated by `ai/actionvalidator.cpp`)
@@ -212,10 +212,14 @@ Accept.
 
 Validation rules: unknown `op` → reject with named error; wrong
 `target.type`, out-of-range `speed`/`duration_ms`, unknown `preset`,
-oversized label → reject. The extractor (`extractJsonArray`) pulls the first
-parseable top-level JSON array out of raw model text (code fences / prose
-tolerated, brackets inside strings handled). Unit tests in
-`tests/test_actions.cpp` cover all reject paths.
+oversized label → reject. The extractor (`extractJsonArray`) pulls the JSON
+array out of raw model text (code fences / prose tolerated, brackets inside
+strings handled). Reasoning models often restate the requested format as
+*valid* JSON inside their chain-of-thought, so the extractor keeps the
+**last** balanced candidate that parses as a JSON array — the model's final
+answer is the last structure it emits (D-028). Unit tests in
+`tests/test_actions.cpp` and `tests/test_ai.cpp` cover all reject paths and
+the format-echo case.
 
 ## 7. Security rules (enforced in code)
 
@@ -227,3 +231,90 @@ tolerated, brackets inside strings handled). Unit tests in
   every executed action is an undoable command.
 - AI disabled ⇒ `KiloClient::chat` refuses locally ("AI is disabled") and
   the network is never touched.
+
+## 8. M6 feature session — recorded live (2026-10-13, 17:24 UTC)
+
+The four M6 features were run end-to-end against the live gateway by the
+dev driver `tools/arena_ai_live` (synthetic 45-cue text-only session,
+30 fps, no API key). **Full raw log:**
+[`live_sessions/m6_ai_live_session_2026-10-13.md`](live_sessions/m6_ai_live_session_2026-10-13.md)
+— every request prompt and every raw response, unedited.
+
+**Result: all four tasks passed validation on the first accepted run**
+(`exit 0`, "network errors: no / validation failures: no"):
+
+| Task | Model output | Validation |
+|------|--------------|------------|
+| Smart title & description | `"How to Brew the Perfect Cup of Tea – AI Demo"` (44 ch) + 177-ch description | title ≤ 60, description ≤ 300 ✓ |
+| Chapters | 7 chapters, e.g. `00:00:01 Welcome and Boiling Water` … `00:01:41 Cleanup and Store Tea` | 3–10 chapters, starts non-decreasing ≤ duration, titles ≤ 6 words ✓ |
+| Subtitle translation → `es` | 45/45 lines, 2 batches (40 + 5) via `batchRanges` | exactly N non-empty strings per batch, same order ✓ |
+| Cut suggestions | 3 silences (copied verbatim from the silence map) + 1 filler (`00:00:24:27 → 00:00:25:12`, the "um,") | ≤ 20 cuts, frame-exact SMPTE, reason ∈ {silence, filler}, confidence ∈ [0,1] ✓ |
+
+### Model selection (recorded observations, anonymous free tier)
+
+Free models churn and behave very differently; every model below was
+probed with real requests on 2026-10-13:
+
+- `kilo-auto/free` — the auto-router sent it to
+  `nvidia/nemotron-3-ultra-550b-a55b:free`, which answered with an in-SSE
+  error chunk: `503 "Upstream error from Nvidia: Service temporarily
+  overloaded"` (empty `choices`, no `[DONE]`). Unreliable for anonymous use.
+- `liquid/lfm-2.5-2.6b:free` — stable and fast, but a 2.6 B model: burned
+  its token budget on chain-of-thought, and on the 40-line translation
+  batch it **consistently returned 39 of 40 strings** (count mismatch,
+  correctly rejected by validation).
+- `inclusionai/ling-3.1-flash` — HTTP 429 upstream rate limit (Novita).
+- `nvidia/nemotron-3-super-120b-a12b:free` — **used for the recorded
+  session.** Exact 40/40 on the batch, valid SMPTE timecodes,
+  `finish_reason: stop` under a 6000-token cap (reasoning + answer ≈ 2800
+  tokens). It reasons out loud, so the session log contains long
+  chain-of-thought sections before each JSON answer.
+
+The product never hardcodes a model (D-007); the driver's default is the
+last model verified stable, overridable by CLI argument.
+
+### Findings that changed shipped code (all with regression tests)
+
+1. **SSE parse bug (D-026):** the chunk loop
+   `while (const int nl = buffer.indexOf('\n'))` exits on a leading *blank*
+   line — `indexOf` returns `0`, which is false as a boolean. Since SSE
+   events are separated by blank lines, everything after the first data
+   line (including `finish_reason` and `[DONE]`) was dropped and every
+   call reported "stream interrupted: incomplete stream" despite a clean
+   HTTP 200. The loop now compares `>= 0`, and `finished` flushes a
+   stranded tail (stream may end without a trailing newline).
+2. **Per-task `max_tokens` budgets (D-027):** a flat 1500 cap was smaller
+   than a reasoning model's chain-of-thought + answer for the big tasks
+   (truncated JSON → parse failure). `KiloClient::chat` takes an optional
+   `maxTokens`; `aifeatures.h` defines the per-task budgets
+   (2000 / 4000 / 6000 / 4000).
+3. **JSON extraction under "format echoes" (D-028):** reasoning models
+   restate the requested format *as valid JSON* in their chain-of-thought
+   (the template `[{\"start\":\"HH:MM:SSFF\",…}]` parses fine and even
+   outlives the real 1-cut answer in length). The extractors now scan all
+   balanced candidates and keep the **last** one that parses — the model's
+   final answer is always the last structure it emits.
+4. **Cache vs. retry (D-029):** the client caches every successful stream —
+   including responses that later fail validation. A retry of the same
+   prompt then hit the cache and failed identically (and the cache-hit path
+   delivered an empty string because `call->streamed` was never set). Fix:
+   cache hits deliver the stored content, and the app/driver call the new
+   `KiloClient::invalidateCache(system, user)` before resending any prompt
+   whose previous reply failed validation.
+5. **Cut end at EOF is valid (D-030):** cuts are applied as exclusive-end
+   range deletes (`RippleRemoveRangeCommand` deletes `[start, end)`), so a
+   tail cut whose end timecode equals the video end (removes up to EOF) is
+   legal. The validator rejected `endFrame >= totalFrames`; it now rejects
+   only `endFrame > totalFrames`. (Live evidence: the model copied the
+   trailing-silence map entry verbatim, ending exactly at 123.8 s.)
+6. **Prompt hardening (live finding, 2026-10-13):** at 30 fps the model
+   emitted frame `30` (e.g. `00:00:24:30`) and zero-length cuts for
+   filler words. `suggestCuts` now states the frame field is lower than the
+   fps and that every end must be strictly after its start, with the filler
+   end covering roughly half a second. The prompt takes an explicit `{fps}`
+   placeholder (the project fps, never a hardcoded assumption).
+7. **Dev tools never touch the user profile (D-031):** the live driver and
+   `tests/test_core.cpp` redirect user-scope INI settings to a temporary
+   directory (`QSettings::setPath`) before `Settings` is constructed —
+   the driver enables AI for the session, and the defaults test asserts a
+   clean profile.

@@ -169,6 +169,9 @@ private:
     void finishTranslation(TaskResultCard *card, const QString &sourceTrackId,
                            const QString &targetLang);
     void onCardAccepted(TaskResultCard *card);
+    // Drop the cached response for a prompt whose last reply failed
+    // validation, so a resend actually reaches the gateway.
+    void invalidateFor(const QString &userPrompt);
     // Transcript / silence inputs (project text only).
     QStringList transcriptLines() const; // "HH:MM:SS:FF text"
     QString silenceMapText() const;

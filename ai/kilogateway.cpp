@@ -93,7 +93,8 @@ void KiloClient::refreshModels()
         m_models = list;
         m_modelsLoaded = !list.isEmpty();
         logInfo(QStringLiteral("Kilo gateway models: %1 (free: %2)")
-                    .arg(list.size(), freeModelIds().size()));
+                    .arg(list.size())
+                    .arg(freeModelIds().size()));
         emit modelsReady(list);
     });
 }
@@ -132,7 +133,8 @@ void KiloClient::clearCache()
 
 void KiloClient::chat(const QString &systemPrompt, const QString &userPrompt,
                       std::function<void(const QString &)> onDelta,
-                      std::function<void(const QString &, const QString &)> onDone)
+                      std::function<void(const QString &, const QString &)> onDone,
+                      int maxTokens)
 {
     if (!m_settings.aiEnabled()) {
         if (onDone) onDone(QString(), QStringLiteral("AI is disabled"));
@@ -145,6 +147,7 @@ void KiloClient::chat(const QString &systemPrompt, const QString &userPrompt,
     auto *call = new ChatCall;
     call->system = systemPrompt;
     call->user = userPrompt;
+    call->maxTokens = maxTokens;
     call->onDelta = std::move(onDelta);
     call->onDone = std::move(onDone);
     m_queue.append(call);
@@ -157,6 +160,7 @@ void KiloClient::startNext()
     m_active = m_queue.takeFirst();
     QString cached;
     if (cacheGet(*m_active, cached)) {
+        m_active->streamed = cached; // finishCall reports call->streamed
         if (m_active->onDelta) m_active->onDelta(cached);
         finishCall(m_active, QString());
         return;
@@ -188,21 +192,23 @@ void KiloClient::sendChat(ChatCall *call)
     messages.append(u);
     body[QStringLiteral("messages")] = messages;
     body[QStringLiteral("stream")] = true;
-    body[QStringLiteral("max_tokens")] = 1500;
+    body[QStringLiteral("max_tokens")] = call->maxTokens;
 
     m_reply = m_nam->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
     QNetworkReply *reply = m_reply;
-    connect(reply, &QNetworkReply::readyRead, this, [this, call, reply] {
-        call->buffer += reply->readAll();
-        call->firstByteReceived = true;
-        // SSE: lines of "data: {json}", terminated by [DONE].
-        while (const int nl = call->buffer.indexOf('\n')) {
+    // SSE: lines of "data: {json}", events separated by blank lines,
+    // terminated by "data: [DONE]". Note: indexOf() returns 0 for a leading
+    // blank line, so the loop must compare against -1, not use the value as
+    // a boolean.
+    auto consumeLines = [call] {
+        int nl = -1;
+        while ((nl = call->buffer.indexOf('\n')) >= 0) {
             const QByteArray line = call->buffer.left(nl).trimmed();
             call->buffer.remove(0, nl + 1);
             if (!line.startsWith("data:")) continue;
             const QByteArray payload = line.mid(5).trimmed();
             if (payload == QLatin1String("[DONE]")) {
-                if (!call->done) { call->done = true; }
+                call->done = true;
                 continue;
             }
             const QJsonDocument d = QJsonDocument::fromJson(payload);
@@ -225,10 +231,22 @@ void KiloClient::sendChat(ChatCall *call)
             const QString finish = choices.first().toObject().value(QStringLiteral("finish_reason")).toString();
             if (!finish.isEmpty()) call->done = true;
         }
+    };
+    connect(reply, &QNetworkReply::readyRead, this, [this, call, reply, consumeLines] {
+        call->buffer += reply->readAll();
+        call->firstByteReceived = true;
+        consumeLines();
     });
-    connect(reply, &QNetworkReply::finished, this, [this, call, reply] {
+    connect(reply, &QNetworkReply::finished, this, [this, call, reply, consumeLines] {
         reply->deleteLater();
         if (m_reply == reply) m_reply = nullptr;
+        // A stream that ends without a trailing newline can leave a final
+        // event (e.g. "[DONE]") stranded in the buffer; flush it before
+        // judging completion.
+        if (!call->buffer.trimmed().isEmpty()) {
+            call->buffer.append('\n');
+            consumeLines();
+        }
         if (call->done) {
             m_budget.spend();
             finishCall(call, QString());
@@ -286,27 +304,36 @@ void KiloClient::cancel()
     }
 }
 
-bool KiloClient::cacheGet(const ChatCall &call, QString &out) const
+QString KiloClient::cachePath(const QString &model, const QString &systemPrompt,
+                              const QString &userPrompt)
 {
     const QByteArray keyBytes = QCryptographicHash::hash(
-        (currentModel() + QLatin1Char('|') + call.system + QLatin1Char('|') + call.user).toUtf8(),
+        (model + QLatin1Char('|') + systemPrompt + QLatin1Char('|') + userPrompt).toUtf8(),
         QCryptographicHash::Sha1);
-    const QString path = QDir(cacheDirectory()).filePath(QString::fromLatin1(keyBytes.toHex()) + QStringLiteral(".json"));
-    QFile f(path);
+    return QDir(cacheDirectory()).filePath(
+        QString::fromLatin1(keyBytes.toHex()) + QStringLiteral(".json"));
+}
+
+bool KiloClient::cacheGet(const ChatCall &call, QString &out) const
+{
+    QFile f(cachePath(currentModel(), call.system, call.user));
     if (!f.open(QIODevice::ReadOnly)) return false;
     const QJsonDocument d = QJsonDocument::fromJson(f.readAll());
     out = d.object().value(QStringLiteral("content")).toString();
     return !out.isEmpty();
 }
 
+void KiloClient::invalidateCache(const QString &systemPrompt, const QString &userPrompt)
+{
+    QFile::remove(cachePath(currentModel(), systemPrompt, userPrompt));
+}
+
 void KiloClient::cachePut(const ChatCall &call, const QString &content)
 {
+    const QString path = cachePath(currentModel(), call.system, call.user);
     QDir dir(cacheDirectory());
     if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) return;
-    const QByteArray keyBytes = QCryptographicHash::hash(
-        (currentModel() + QLatin1Char('|') + call.system + QLatin1Char('|') + call.user).toUtf8(),
-        QCryptographicHash::Sha1);
-    QFile f(dir.filePath(QString::fromLatin1(keyBytes.toHex()) + QStringLiteral(".json")));
+    QFile f(path);
     if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         QJsonObject o;
         o[QStringLiteral("model")] = currentModel();

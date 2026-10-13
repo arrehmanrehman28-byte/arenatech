@@ -67,6 +67,7 @@ add_subdirectory(render)
 add_subdirectory(stt)
 add_subdirectory(ai)
 add_subdirectory(app)
+add_subdirectory(tools)
 
 if(ARENA_BUILD_TESTS)
     enable_testing()

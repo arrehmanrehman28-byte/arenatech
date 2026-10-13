@@ -7,10 +7,35 @@
 #include "util.h"
 #include <QTemporaryDir>
 #include <QFile>
+#include <QSettings>
 #include <QThread>
 #include <utime.h>
 
 using namespace arena;
+
+namespace {
+// Point user-scope INI settings at a throwaway directory so default-value
+// assertions are immune to the user's real profile (which a live run or
+// the app itself may have modified). Must run before Settings is first
+// constructed, hence a global test environment.
+class SettingsIsolation : public ::testing::Environment
+{
+public:
+    void SetUp() override
+    {
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, m_tmp.path());
+    }
+
+private:
+    QTemporaryDir m_tmp;
+};
+
+SettingsIsolation *g_settings_isolation = [] {
+    auto *env = new SettingsIsolation;
+    ::testing::AddGlobalTestEnvironment(env);
+    return env;
+}();
+} // namespace
 
 TEST(ProjectModel, JsonRoundTrip)
 {

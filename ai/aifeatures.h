@@ -37,6 +37,15 @@ namespace aifeatures {
 
 // Spec limits (the prompts demand exactly these).
 constexpr int kTranslateBatchSize = 40; // entries per translation request
+
+// Per-task token budgets for the gateway request. Free-tier models that
+// think out loud (delta.reasoning) spend the budget on chain-of-thought
+// before emitting the JSON, so the biggest tasks need headroom; sized from
+// live runs (2026-10-13, see AI_INTEGRATION.md).
+constexpr int kTitleMaxTokens = 2000;
+constexpr int kChaptersMaxTokens = 4000;
+constexpr int kTranslateBatchMaxTokens = 6000;
+constexpr int kCutsMaxTokens = 4000;
 constexpr int kMinChapters = 3;
 constexpr int kMaxChapters = 10;
 constexpr int kMaxCuts = 20;
@@ -74,7 +83,8 @@ bool parseCuts(const QString &raw, double durationSec, double fps,
 QString translatePrompt(const QVector<QJsonObject> &entries, const QString &targetLang);
 QString chaptersPrompt(const QString &transcriptLines);
 QString titlePrompt(const QString &context);
-QString cutsPrompt(const QString &transcriptLines, const QString &silenceMap);
+QString cutsPrompt(const QString &transcriptLines, const QString &silenceMap,
+                   double fps = 30.0);
 
 } // namespace aifeatures
 } // namespace arena

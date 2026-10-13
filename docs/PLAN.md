@@ -15,7 +15,7 @@ Status legend: `not started` / `in progress` / `verified` (build + tests green, 
 | M3 | Rendering | D3D11/OpenGL compositor, transforms, opacity, transitions, basic color, frame cache (LRU 512 MB) | verified (GPU path → M9) |
 | M4 | Export | Presets, hardware encode with software fallback, batch queue with progress/ETA/cancel | verified (MOV/ProRes, WAV → M8) |
 | M5 | Subtitles | SRT/VTT/ASS import-export, multi-language tracks (BCP-47), burn-in, RTL, font fallback, reading-speed checks | verified (ASS style round-trip, per-track styling → M8) |
-| M6 | Kilo Gateway | Streaming client (verified against live gateway), subtitle translation, chapters, titles, AI panel, budget, cache | not started |
+| M6 | Kilo Gateway | Streaming client (verified against live gateway), subtitle translation, chapters, titles, cut suggestions, AI panel, budget, cache | verified (NL command bar → M7) |
 | M7 | Smart features | whisper.cpp transcription, edit suggestions from transcript + silence map, NL command bar (`/ai`) | not started |
 | M8 | Polish | Onboarding tour, empty states, motion, accessibility audit, DPI 100–300 %, performance tuning | not started |
 | M9 | Release | Portable .exe, Inno Setup installer, code-signing hook, benchmark report, docs final, release checklist | not started |
@@ -72,8 +72,24 @@ Status legend: `not started` / `in progress` / `verified` (build + tests green, 
 
 ### M6 — Kilo Gateway
 - Client (streaming SSE, 30 s timeout, backoff + jitter on 429/5xx, queue, per-hour budget with status-bar meter, response cache keyed by hash(model, prompt, params), key via env `KILO_API_KEY` or DPAPI-secure settings).
-- Features: subtitle translation (≈ 40 entries/batch, line-count validation, retry failed batch only), chapters, smart titles/descriptions, edit suggestions (accept/reject, never auto-apply).
+- Features: subtitle translation (≈ 40 entries/batch, line-count validation, retry failed batch only), chapters, smart titles/descriptions, cut suggestions (accept/reject, never auto-apply).
 - **Exit:** all features run against the live gateway in a recorded session logged to `AI_INTEGRATION.md`; app 100 % functional with AI disabled/offline.
+- **Done (all exit criteria met)**: client verified against the live gateway
+  (M0, SSE/reasoning findings in `AI_INTEGRATION.md`); offline parse/validate
+  layer (`ai/aifeatures`) with per-task contracts; AI panel with the four
+  tasks + free-form Ask, streaming previews, per-task Accept/Reject cards;
+  accepted results applied as undoable commands (translation → subtitle
+  cues, chapters → markers, title → project rename, cuts → per-cut ripple
+  deletes on the video primary track — D-023/D-024). **Live session
+  recorded 2026-10-13** (driver `tools/arena_ai_live`, full raw log
+  `docs/live_sessions/m6_ai_live_session_2026-10-13.md`): all four tasks
+  green — 45/45 lines translated to Spanish in 2 batches (40 + 5), 7
+  chapters, title 44 ch + description 177 ch, 4 cuts (3 silences + filler);
+  0 network errors. The live run exposed and fixed five shipped bugs
+  (D-026…D-030), each with regression tests. Core editing never depends on
+  AI (dependency rule + test); with AI disabled the app is fully functional
+  (`chat()` refuses locally, no network). Deferred to M7: NL command bar
+  (whisper + strict action schema already in place).
 
 ### M7 — Smart features
 - whisper.cpp (tiny/base/small on demand, CPU default, CUDA/Vulkan optional) with word-level timestamps; transcript feeds M6 features (text only ever leaves the machine); edit suggestions from transcript + silence map; NL command bar with strict JSON action schema, preview + confirmation, all actions undoable.
