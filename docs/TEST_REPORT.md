@@ -118,3 +118,34 @@ Full captured payloads: `docs/AI_INTEGRATION.md` §1–3.
 12. **CI Windows job** is defined (vcpkg Qt + MSVC + Inno) but has not
     executed in this environment (no Windows runner here); the Linux job
     is fully green.
+
+---
+
+## Addendum — M5 Subtitles (2026-10-13)
+
+Per-milestone verification evidence lives in `PROGRESS.md`; this report
+keeps the M0 snapshot above. Current totals after M5:
+
+- **ctest: 88/88 pass** (87 unit + guismoke), **0 warnings** on a clean
+  rebuild; `Guismoke.MediaPipeline` includes 4 M5 checks (panel exists,
+  panel attached, burn-in renders, burn-in changes monitor pixels).
+- New suites: `Subtitles.*` (byte-stable SRT/VTT/ASS round-trips, time
+  codes, frame conversion, reading-speed thresholds, RTL detection,
+  parse errors), `ProjectModel.SubtitleTrackRoundTripWithCues`,
+  `BurnIn.*` (Urdu + Arabic golden frames, multi-line, disabled track),
+  `I18nTest.ShippedCatalogsHaveKeyParity` (all 8 catalogs in lockstep,
+  branding never localized).
+- i18n now ships all 8 spec languages (en, ur, ar, es, fr, hi, zh, ja).
+
+New known limitations (M5):
+
+- Burn-in goldens are environment-specific (bundled Noto Sans Arabic +
+  this sandbox's fontconfig); they skip honestly where no
+  Arabic-capable font resolves. Windows uses Arial (ships an Arabic
+  subset).
+- The ASS encoder emits a minimal fixed scaffold (one `Default`
+  style); exotic style setups round-trip cues but not original styling.
+- Burn-in style is fixed (bottom-center, white text, black outline,
+  canvas/20 font size); per-track styling is deferred to M8 polish.
+- es/fr/hi/zh/ja translations are agent-authored and benefit from
+  native-speaker review before M9 (same caveat as ur/ar, #11 above).

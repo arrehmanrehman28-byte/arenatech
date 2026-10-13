@@ -14,7 +14,7 @@ Status legend: `not started` / `in progress` / `verified` (build + tests green, 
 | M2 | Timeline | Tracks, clips, ripple/roll/slip/slide trims, snapping, markers, undo/redo, autosave/recovery | verified (slip/slide deferred) |
 | M3 | Rendering | D3D11/OpenGL compositor, transforms, opacity, transitions, basic color, frame cache (LRU 512 MB) | verified (GPU path → M9) |
 | M4 | Export | Presets, hardware encode with software fallback, batch queue with progress/ETA/cancel | verified (MOV/ProRes, WAV → M8) |
-| M5 | Subtitles | SRT/VTT/ASS import-export, multi-language tracks (BCP-47), burn-in, RTL, font fallback, reading-speed checks | not started |
+| M5 | Subtitles | SRT/VTT/ASS import-export, multi-language tracks (BCP-47), burn-in, RTL, font fallback, reading-speed checks | verified (ASS style round-trip, per-track styling → M8) |
 | M6 | Kilo Gateway | Streaming client (verified against live gateway), subtitle translation, chapters, titles, AI panel, budget, cache | not started |
 | M7 | Smart features | whisper.cpp transcription, edit suggestions from transcript + silence map, NL command bar (`/ai`) | not started |
 | M8 | Polish | Onboarding tour, empty states, motion, accessibility audit, DPI 100–300 %, performance tuning | not started |

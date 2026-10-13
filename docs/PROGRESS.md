@@ -3,6 +3,108 @@
 *Verified-phase log (working rule #2). Every entry: build clean (zero
 warnings) → tests → targeted checks → evidence.*
 
+## 2026-10-13 — M5 Subtitles: verified ✅
+
+**Scope delivered**
+
+- **Subtitle core** (`core/subtitles.{h,cpp}`): lenient parsers +
+  canonical encoders for SRT, WebVTT, ASS; auto-detection by content
+  (WEBVTT header / `[Events]`/`[Script Info]`) with extension fallback;
+  time codes `HH:MM:SS,mmm` / `HH:MM:SS.mmm` (`MM:SS` accepted) /
+  `H:MM:SS.cc`; `secToFrame`/`frameToSec` at project fps; reading-speed
+  check (> 42 visible chars or > 17 cps → `CueWarning`); RTL helpers
+  (`isRtlLanguage` BCP-47, `textIsRtl` first-strong-character).
+- **Project layer** (`core/project.{h,cpp}`): `SubtitleTrack`
+  (id/language/name/`burnIn`/cues) + `TimelineCue` (startFrame/endFrame
+  exclusive/text), additive JSON fields — old files load unchanged
+  (no schema bump, D-021).
+- **Burn-in** (`render/compositor.cpp`): `renderFrame` now bakes every
+  enabled subtitle track after the video tracks — bottom-center, white
+  with black outline, size = canvas/20, word-wrapped at 90 % width,
+  RTL via `QTextLayout` bidi (no per-language layout code). Font family
+  is a process-wide default (`Compositor::setDefaultSubtitleFont`,
+  "Arial" — Windows ships an Arabic subset); the sandbox/CI points it
+  at the bundled Noto Sans Arabic fixture (D-022). The preview fast
+  path now forces the compositor when any track has `burnIn` on.
+- **Panel** (`app/panels.{h,cpp}` M5.3): track list (name / BCP-47 /
+  burn-in checkbox), cue table (SMPTE `HH:MM:SS:FF` start/end + text),
+  add/delete track, add/delete/edit cue (dialog with live
+  reading-speed warning), SRT/VTT/ASS import (auto-detect + language
+  prompt) and export (byte-identical to the canonical encoders);
+  flagged cues are underlined + tinted with the reason in the tooltip.
+  Panel mutates the project and emits `subtitlesChanged` → autosave.
+- **i18n**: all M5 strings translated; **five new catalogs** (es, fr,
+  hi, zh, ja) for the full spec set of 8 languages; new
+  `I18nTest.ShippedCatalogsHaveKeyParity` enforces identical key sets
+  and untranslated branding in every catalog; discovery test now
+  asserts all 8.
+
+**Exit criteria (PLAN M5)**
+
+- Round-trip SRT/VTT/ASS byte-stable on the sample set:
+  `Subtitles.SrtRoundTripByteStable` / `VttRoundTripByteStable` /
+  `AssRoundTripByteStable` — fixtures in `tests/fixtures/subs`
+  (4 cues: multi-line text, hour cue, VTT NOTE region, ASS override
+  tags), `encode(parse(bytes)) == bytes`.
+- Urdu + Arabic burn-in golden frames: `BurnIn.UrduBurnInGolden` /
+  `BurnIn.ArabicBurnInGolden` (Noto Sans Arabic, deterministic in this
+  environment; regenerated with `ARENA_GOLDEN_UPDATE=1`), plus
+  `BurnIn.MultiLineCueBurnIn` and `BurnIn.DisabledTrackIsNotBaked`.
+- End-to-end through the real UI: `Guismoke.MediaPipeline` M5 section
+  (4 checks) verifies the panel exists, re-attaches to the project,
+  renders a burn-in frame, and that toggling burn-in changes the
+  monitor pixels at the same playhead.
+
+**Verification (g++ 14.2, Qt 6.8.2, FFmpeg 7.1)**
+
+- Clean rebuild: **0 errors, 0 warnings**.
+- ctest: **88/88 pass** — new: 12 `Subtitles.*`/`ProjectModel.*` +
+  4 `BurnIn.*` + 1 `I18nTest.ShippedCatalogsHaveKeyParity`; all 71
+  pre-M5 tests still pass.
+- `Guismoke.MediaPipeline`: **PASS** (M5: panel exists / attached /
+  burn-in renders / burn-in changes monitor pixels).
+
+**Bugs found & fixed**
+
+- Canonical line endings: the first encoder pass emitted lone `\r`
+  where the fixtures (and the formats) use CRLF; ASS section
+  separators same class. Fixed and pinned by the byte-stable tests.
+- Multi-line cue text: fixtures keep bare `\n` *inside* cue text while
+  record lines end in CRLF — encoders must not "normalize" in-text
+  newlines (byte-stable tests catch any drift).
+- `QTextLine::setWidth` does not exist in Qt 6.8 — it is
+  `setLineWidth`; `QFontDatabase::addApplicationFont` is broken in
+  this build (returns 0 for every file, even system DejaVu) — the
+  burn-in font is loaded through a workspace-local `FONTCONFIG_FILE`
+  pointing at the bundled font directory (D-022), with a clean
+  `GTEST_SKIP` when no Arabic-capable font exists.
+- Preview fast path skipped the compositor (and thus burn-in) when no
+  clip had effects — condition extended with `anyBurnIn`.
+- Name collision: project cue renamed `SubtitleCue` → `TimelineCue`
+  (the format-level `arena::SubtitleCue` in seconds stays as-is).
+- Guismoke burn-in diff needed (a) `seekToFrame` +
+  `applyPlaybackResolution` — the paused engine delivers no frames on
+  a same-position seek — and (b) size normalization: the burn-in pass
+  composites at canvas resolution while the plain pass uses the native
+  source frame on the fast path.
+
+**Known limitations**
+
+- Burn-in goldens are environment-specific (font/hinting); they run
+  in this sandbox and skip honestly elsewhere. On Windows the default
+  font is Arial (Arabic subset) — no goldens run there.
+- The ASS encoder writes a minimal fixed scaffold (`[Script Info]`,
+  one `Default` style, `[Events]`); exotic style setups round-trip
+  their cues but not the original styling.
+- Burn-in position/style is fixed (bottom-center, white/black,
+  canvas/20 font) — per-track styling lands with M8 polish if needed.
+
+**Not done / next**
+
+- M6 AI features (subtitle translation batching, chapters, titles,
+  cut suggestions) against the live gateway.
+- M7 STT (whisper.cpp) + NL command bar end-to-end.
+
 ## 2026-10-13 — M4 Export: verified ✅
 
 **Scope delivered**
