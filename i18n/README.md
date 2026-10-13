@@ -1,3 +1,20 @@
+## Shipped languages
+
+| bcp47 | Native name | Direction |
+|-------|-------------|-----------|
+| `en`  | English     | ltr |
+| `ur`  | اردو         | rtl |
+| `ar`  | العربية      | rtl |
+| `es`  | Español     | ltr |
+| `fr`  | Français    | ltr |
+| `hi`  | हिन्दी        | ltr |
+| `zh`  | 中文（简体）   | ltr |
+| `ja`  | 日本語        | ltr |
+
+`tests/test_i18n.cpp` enforces that every shipped catalog keeps the exact key
+set of `en.json` and that the branding strings (`app.name`, `credit.madeBy`,
+`dlg.about.credit`) stay untranslated.
+
 # Adding a language
 
 1. Copy `en.json` to `<bcp47>.json` (e.g. `fr.json`, `hi.json`, `ja.json`, `zh-Hans.json`).

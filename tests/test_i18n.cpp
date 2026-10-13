@@ -3,6 +3,9 @@
 #include "i18n.h"
 #include <QDir>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSet>
 #include <QTemporaryDir>
 
 using namespace arena;
@@ -17,9 +20,12 @@ TEST_F(I18nTest, DiscoversShippedLanguages)
     const auto locales = I18n::instance().locales();
     QStringList bcp47;
     for (const auto &l : locales) bcp47 << l.bcp47;
-    EXPECT_TRUE(bcp47.contains("en"));
-    EXPECT_TRUE(bcp47.contains("ar"));
-    EXPECT_TRUE(bcp47.contains("ur"));
+    // The eight shipped UI languages (spec).
+    for (const QString &e : {QStringLiteral("en"), QStringLiteral("ur"),
+                             QStringLiteral("ar"), QStringLiteral("es"),
+                             QStringLiteral("fr"), QStringLiteral("hi"),
+                             QStringLiteral("zh"), QStringLiteral("ja")})
+        EXPECT_TRUE(bcp47.contains(e)) << e.toUtf8().constData();
 }
 
 TEST_F(I18nTest, RtlDetection)
@@ -99,4 +105,41 @@ TEST_F(I18nTest, DropInLanguageAppears)
     EXPECT_TRUE(bcp47.contains("zz-test"));
     // Restore the real catalog for other tests.
     I18n::instance().loadDirectory(ARENA_I18N_DIR);
+}
+
+// M5.4: the eight shipped catalogs must stay in lockstep — same key set as
+// English, and branding strings never localized.
+TEST_F(I18nTest, ShippedCatalogsHaveKeyParity)
+{
+    const QStringList locs = {QStringLiteral("en"), QStringLiteral("ur"),
+                              QStringLiteral("ar"), QStringLiteral("es"),
+                              QStringLiteral("fr"), QStringLiteral("hi"),
+                              QStringLiteral("zh"), QStringLiteral("ja")};
+    QHash<QString, QJsonObject> strings;
+    for (const QString &loc : locs) {
+        QFile f(QStringLiteral(ARENA_I18N_DIR) + "/" + loc + QStringLiteral(".json"));
+        ASSERT_TRUE(f.open(QIODevice::ReadOnly)) << loc.toUtf8().constData();
+        const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+        strings[loc] = root.value(QStringLiteral("strings")).toObject();
+    }
+    const QStringList enList = strings[QStringLiteral("en")].keys();
+    const QSet<QString> enKeys(enList.begin(), enList.end());
+    for (const QString &loc : locs) {
+        if (loc == QLatin1String("en")) continue;
+        const QStringList locList = strings[loc].keys();
+        const QSet<QString> locKeys(locList.begin(), locList.end());
+        EXPECT_EQ(locKeys, enKeys) << loc.toUtf8().constData();
+    }
+    for (const QString &loc : locs) {
+        const QJsonObject &s = strings[loc];
+        EXPECT_EQ(s.value(QStringLiteral("app.name")).toString(),
+                  QStringLiteral("Arena Edit"))
+            << loc.toUtf8().constData();
+        EXPECT_EQ(s.value(QStringLiteral("credit.madeBy")).toString(),
+                  QStringLiteral("Made by arenatechofficial.pages.dev"))
+            << loc.toUtf8().constData();
+        EXPECT_EQ(s.value(QStringLiteral("dlg.about.credit")).toString(),
+                  QStringLiteral("Made by arenatechofficial.pages.dev"))
+            << loc.toUtf8().constData();
+    }
 }
