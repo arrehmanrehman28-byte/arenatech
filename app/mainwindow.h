@@ -50,6 +50,10 @@ public:
 
     QString projectPath() const { return m_projectPath; }
     Project *project() const { return m_project ? m_project.get() : nullptr; }
+    TimelineWidget *timeline() const { return m_timeline; }
+    QString selectedClipId() const { return m_selectedClip; }
+    void undo() { m_undoStack.undo(); }
+    void redo() { m_undoStack.redo(); }
 
     // Project file operations (used by UI + tests).
     bool newProject(const NewProjectResult &r);
@@ -101,6 +105,7 @@ private:
     // The path the engine should use for `path` (proxy when available).
     QString playablePathFor(const QString &path) const;
     void selectClipAt(const QString &source, qint64 timelineFrame);
+    void deleteSelectedClip();
     void refreshTimeline();
     void generateWaveformThumbs(const QString &path);
     void onEngineFrame(const QImage &img, int frame);
@@ -131,6 +136,7 @@ private:
     QHash<QString, QString> m_proxies;      // source -> proxy path
     QHash<QString, QVector<Peak>> m_wavePeaks; // source -> waveform (for clips)
     QString m_currentSource;                // clip shown in the monitor
+    QString m_selectedClip;                 // selected clip id (timeline)
     QString m_engineSource;                 // path the engine is open on
     QToolButton *m_playBtn = nullptr;
 

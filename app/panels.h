@@ -101,12 +101,24 @@ private:
     QStringList m_paths;
 };
 
+// Summary of the clip currently selected on the timeline (for the Inspector).
+struct ClipSelection {
+    QString source;  // file name
+    bool hasVideo = false;
+    bool missing = false;
+    qint64 in = 0;
+    qint64 out = 0;
+    qint64 offset = 0;
+    double fps = 30.0;
+};
+
 class InspectorWidget : public QWidget {
     Q_OBJECT
 public:
     explicit InspectorWidget(QWidget *parent = nullptr);
     void retranslateUi();
     void setProjectName(const QString &name, double fps, int w, int h);
+    void setClip(const ClipSelection &clip);
     void clearSelection();
 
 private:

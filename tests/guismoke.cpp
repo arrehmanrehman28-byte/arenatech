@@ -5,11 +5,14 @@
 // playback exercises the wall-clock fallback path.
 #include <QApplication>
 #include <QEventLoop>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QTimer>
 #include <cstdio>
 
 #include "mainwindow.h"
 #include "themer.h"
+#include "timeline.h"
 
 using namespace arena;
 
@@ -89,6 +92,66 @@ int main(int argc, char **argv)
 
     const QImage img = w.previewImage();
     check(img.width() > img.height(), "16:9 aspect preserved");
+
+    // --- M2: selection, delete, undo -------------------------------------
+    Project *proj = w.project();
+    check(proj != nullptr, "project auto-created");
+    Track *v1 = nullptr;
+    for (Track &t : proj->tracks)
+        if (t.type == TrackType::Video) {
+            v1 = &t;
+            break;
+        }
+    check(v1 && v1->clips.size() == 1, "one clip on V1");
+    const QString clipId = v1->clips.first().id;
+    const qint64 clipStart = v1->clips.first().offset;
+    const qint64 clipEnd = clipStart + v1->clips.first().duration();
+
+    // Click a clip on the canvas (x = header + frame/fpp).
+    TimelineCanvas *canvas = w.timeline()->canvas();
+    const int xIn = 56 + 3 + int((clipStart + 2) / canvas->framesPerPx());
+    {
+        QMouseEvent ev(QEvent::MouseButtonPress, QPointF(xIn, 12), QPointF(xIn, 12),
+                       Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(canvas, &ev);
+        spin(50);
+    }
+    check(w.selectedClipId() == clipId, "click selects clip");
+    // Inspector shows the selection.
+    // (Inspector state is internal; selection id + undo below cover the path.)
+
+    // Delete key removes the clip.
+    {
+        QKeyEvent ev(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier);
+        QApplication::sendEvent(&w, &ev);
+        spin(50);
+    }
+    check(v1->clips.isEmpty(), "Delete removes clip");
+    check(w.selectedClipId().isEmpty(), "selection cleared after delete");
+
+    // Undo brings it back.
+    w.undo();
+    spin(50);
+    check(v1->clips.size() == 1 && v1->clips.first().id == clipId,
+          "undo restores clip (same id)");
+
+    // Redo deletes it again.
+    w.redo();
+    spin(50);
+    check(v1->clips.isEmpty(), "redo deletes clip again");
+    w.undo();
+    spin(50);
+
+    // Click empty timeline space deselects.
+    {
+        const int xEmpty = 56 + int((clipEnd + 5) / canvas->framesPerPx());
+        QMouseEvent ev(QEvent::MouseButtonPress, QPointF(xEmpty, 12),
+                       QPointF(xEmpty, 12), Qt::LeftButton, Qt::LeftButton,
+                       Qt::NoModifier);
+        QApplication::sendEvent(canvas, &ev);
+        spin(50);
+    }
+    check(w.selectedClipId().isEmpty(), "empty-space click deselects");
 
     if (g_failures == 0) {
         printf("GUISOKE PASS\n");

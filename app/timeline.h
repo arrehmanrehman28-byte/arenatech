@@ -16,10 +16,11 @@ namespace arena {
 
 // One clip as the canvas should draw it (frames on its track).
 struct ClipView {
+    QString clipId;
     qint64 offsetFrames = 0;
     qint64 durationFrames = 0;
     QVector<Peak> waveform;
-    bool selected = false; // clip currently shown in the monitor
+    bool selected = false; // currently selected clip
     bool missing = false;  // source media missing
 };
 
@@ -41,8 +42,9 @@ public:
     qint64 frameAtX(double x) const;
 
 signals:
-    void seekRequested(qint64 frame); // ruler scrub (press + drag)
-    void clipClicked(qint64 frame);   // click a clip to select it
+    void seekRequested(qint64 frame);    // ruler scrub (press + drag)
+    void clipClicked(qint64 frame);      // click a clip to select it
+    void clipDeselected();               // click on empty timeline space
 
 protected:
     void paintEvent(QPaintEvent *) override;
@@ -75,6 +77,7 @@ signals:
     void zoomChanged(double zoom);
     void seekRequested(qint64 frame);
     void clipClicked(qint64 frame);
+    void clipDeselected();
 
 private:
     QToolButton *m_snap;

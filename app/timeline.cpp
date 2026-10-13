@@ -64,13 +64,17 @@ void TimelineCanvas::mousePressEvent(QMouseEvent *e)
     }
     if (e->button() == Qt::LeftButton && e->position().x() > 56) {
         m_scrubbing = true;
-        // Clip in the video track under the cursor gets the selection.
+        // Clip in the video track under the cursor gets the selection;
+        // empty space deselects.
         const qint64 f = frameAtX(e->position().x());
+        bool overClip = false;
         for (const ClipView &c : m_clips)
             if (f >= c.offsetFrames && f < c.offsetFrames + c.durationFrames) {
                 emit clipClicked(c.offsetFrames);
+                overClip = true;
                 break;
             }
+        if (!overClip) emit clipDeselected();
         emit seekRequested(f);
         e->accept();
         return;
@@ -254,6 +258,11 @@ TimelineWidget::TimelineWidget(QWidget *parent) : QWidget(parent)
         m_canvas->setZoom(m_canvas->zoom() * 0.8);
         emit zoomChanged(m_canvas->zoom());
     });
+
+    // Forward canvas interaction (scrub, select, deselect).
+    connect(m_canvas, &TimelineCanvas::seekRequested, this, &TimelineWidget::seekRequested);
+    connect(m_canvas, &TimelineCanvas::clipClicked, this, &TimelineWidget::clipClicked);
+    connect(m_canvas, &TimelineCanvas::clipDeselected, this, &TimelineWidget::clipDeselected);
 }
 
 void TimelineWidget::retranslateUi()

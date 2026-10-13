@@ -328,11 +328,16 @@ void MainWindow::buildDocks()
             if (t.type != TrackType::Video) continue;
             for (const Clip &c : t.clips) {
                 if (frame >= c.offset && frame < c.offset + c.duration()) {
+                    m_selectedClip = c.id;
                     selectClipAt(c.sourceRef, frame);
                     return;
                 }
             }
         }
+    });
+    connect(m_timeline, &TimelineWidget::clipDeselected, this, [this] {
+        m_selectedClip.clear();
+        refreshTimeline();
     });
 
     m_inspector = new InspectorWidget;
@@ -778,6 +783,17 @@ void MainWindow::noteHistoryChanged()
 {
     m_autosave->setProjectChanged();
     refreshUndoButtons();
+    if (m_project && !m_selectedClip.isEmpty()) {
+        bool found = false;
+        for (const Track &t : m_project->tracks)
+            for (const Clip &c : t.clips)
+                if (c.id == m_selectedClip) {
+                    found = true;
+                    break;
+                }
+        if (!found) m_selectedClip.clear();
+    }
+    refreshTimeline();
 }
 
 void MainWindow::tickSecond()
@@ -821,6 +837,33 @@ struct AddClipCommand : public Command {
         return arenaTr("media.clipAdded", {{QStringLiteral("track"), track->name}});
     }
     int retainedBytes() const override { return 384; }
+};
+
+// Remove one clip from a track (undoable; re-inserts at the same position).
+struct DeleteClipCommand : public Command {
+    Track *track = nullptr;
+    QString clipId;
+    Clip removed;
+    int index = -1;
+    DeleteClipCommand(Track *t, QString id) : track(t), clipId(std::move(id)) {}
+    void execute() override
+    {
+        index = -1;
+        for (int i = 0; i < track->clips.size(); ++i)
+            if (track->clips[i].id == clipId) {
+                removed = track->clips[i];
+                index = i;
+                track->clips.removeAt(i);
+                break;
+            }
+    }
+    void undo() override
+    {
+        if (removed.id.isEmpty()) return;
+        track->clips.insert(qBound(0, index, track->clips.size()), removed);
+    }
+    QString actionName() const override { return arenaTr("media.clipDeleted"); }
+    int retainedBytes() const override { return 512; }
 };
 
 // Re-point all clips from one source to another (undoable).
@@ -1082,9 +1125,10 @@ void MainWindow::refreshTimeline()
         done = true; // canvas draws clips on the first video track
         for (const Clip &c : t.clips) {
             ClipView v;
+            v.clipId = c.id;
             v.offsetFrames = c.offset;
             v.durationFrames = c.duration();
-            v.selected = (c.sourceRef == m_currentSource);
+            v.selected = (c.id == m_selectedClip);
             v.missing = !QFileInfo::exists(c.sourceRef);
             if (m_wavePeaks.contains(c.sourceRef)) v.waveform = m_wavePeaks.value(c.sourceRef);
             views.append(v);
@@ -1092,6 +1136,25 @@ void MainWindow::refreshTimeline()
     }
     m_timeline->canvas()->setClips(views);
     m_timeline->canvas()->setPlayhead(m_playhead);
+
+    // Inspector: the selected clip, or the project summary.
+    for (const Track &t : m_project->tracks) {
+        for (const Clip &c : t.clips) {
+            if (c.id != m_selectedClip) continue;
+            ClipSelection sel;
+            sel.source = QFileInfo(c.sourceRef).fileName();
+            sel.in = c.in;
+            sel.out = c.out;
+            sel.offset = c.offset;
+            sel.fps = m_project->fps;
+            sel.hasVideo = true;
+            sel.missing = !QFileInfo::exists(c.sourceRef);
+            m_inspector->setClip(sel);
+            return;
+        }
+    }
+    m_inspector->setProjectName(m_project->name, m_project->fps, m_project->width,
+                                m_project->height);
 }
 
 void MainWindow::seekToFrame(qint64 frame)
@@ -1201,19 +1264,57 @@ void MainWindow::relinkMedia(const QString &oldPath)
 
 void MainWindow::keyPressEvent(QKeyEvent *e)
 {
-    if (e->key() == Qt::Key_Space && e->modifiers() == Qt::NoModifier) {
-        if (auto *fw = qApp->focusWidget()) {
-            if (fw->inherits("QLineEdit") || fw->inherits("QPlainTextEdit") ||
-                fw->inherits("QTextEdit") || fw->inherits("QAbstractSpinBox")) {
-                QWidget::keyPressEvent(e);
-                return;
-            }
+    if (auto *fw = qApp->focusWidget()) {
+        if (fw->inherits("QLineEdit") || fw->inherits("QPlainTextEdit") ||
+            fw->inherits("QTextEdit") || fw->inherits("QAbstractSpinBox")) {
+            QWidget::keyPressEvent(e);
+            return;
         }
+    }
+    if (e->key() == Qt::Key_Space && e->modifiers() == Qt::NoModifier) {
         togglePlayback();
         e->accept();
         return;
     }
+    if (e->key() == Qt::Key_Delete) {
+        deleteSelectedClip();
+        e->accept();
+        return;
+    }
     QWidget::keyPressEvent(e);
+}
+
+void MainWindow::deleteSelectedClip()
+{
+    if (!m_project || m_selectedClip.isEmpty()) {
+        statusBar()->showMessage(arenaTr("timeline.noSelection"), 2500);
+        return;
+    }
+    Track *track = nullptr;
+    int index = -1;
+    for (Track &t : m_project->tracks)
+        for (int i = 0; i < t.clips.size(); ++i)
+            if (t.clips[i].id == m_selectedClip) {
+                track = &t;
+                index = i;
+                break;
+            }
+    if (!track || index < 0) {
+        m_selectedClip.clear();
+        refreshTimeline();
+        return;
+    }
+    const QString source = track->clips[index].sourceRef;
+    commitCommand(std::make_unique<DeleteClipCommand>(track, m_selectedClip));
+    m_selectedClip.clear();
+    if (m_currentSource == source) {
+        m_currentSource.clear();
+        m_engine->close();
+        m_engineSource.clear();
+        m_monitor->setFrame(QImage());
+        updateTransportButtons();
+    }
+    refreshTimeline();
 }
 
 

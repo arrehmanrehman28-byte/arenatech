@@ -385,6 +385,29 @@ void InspectorWidget::setProjectName(const QString &name, double fps, int w, int
     m_form->addRow(note);
 }
 
+void InspectorWidget::setClip(const ClipSelection &clip)
+{
+    m_empty->hide();
+    m_content->show();
+    while (m_form->rowCount() > 0) m_form->removeRow(0);
+    m_form->addRow(arenaTr("common.name"), new QLabel(clip.source));
+    m_form->addRow(arenaTr("inspector.clip.sourceType"),
+                   new QLabel(clip.hasVideo ? arenaTr("media.video") : arenaTr("media.audio")));
+    m_form->addRow(arenaTr("inspector.clip.in"),
+                   new QLabel(framesToTimecode(clip.in, clip.fps)));
+    m_form->addRow(arenaTr("inspector.clip.out"),
+                   new QLabel(framesToTimecode(clip.out, clip.fps)));
+    m_form->addRow(arenaTr("inspector.clip.start"),
+                   new QLabel(framesToTimecode(clip.offset, clip.fps)));
+    m_form->addRow(arenaTr("inspector.clip.duration"),
+                   new QLabel(framesToTimecode(clip.out - clip.in, clip.fps)));
+    if (clip.missing) {
+        auto *warn = new QLabel(arenaTr("media.missing"));
+        warn->setProperty("role", QStringLiteral("danger"));
+        m_form->addRow(warn);
+    }
+}
+
 void InspectorWidget::clearSelection()
 {
     m_content->hide();
