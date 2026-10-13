@@ -101,12 +101,33 @@ Known M1 behavior: multi-clip playback switches sources at clip
 boundaries (jump cuts); per-clip in/out trimming, ripple edits, and snap
 arriving in M2.
 
+## Timeline editing (M2)
+
+- **Select** — click a clip; click empty lane space to deselect. The
+  Inspector shows the selection's In/Out/Start/Duration (SMPTE) and a
+  missing-media warning.
+- **Trim** — grab a clip edge (split cursor) and drag: the left edge
+  moves the in point + position, the right edge moves the out point.
+  Geometry is clamped to the timeline start and the source's length;
+  release commits one undoable command.
+- **Roll** — grab the boundary between two adjacent clips and drag:
+  both clips trade frames (duration sum preserved).
+- **Ripple trim** — **Q** trims the end of the clip at the playhead to
+  the playhead and shifts later clips left; **W** trims the start and
+  shifts later clips right.
+- **Snap** — while trimming, the moving edge snaps to clip edges and
+  the playhead (4 px) with a violet snap line; toggle in the timeline
+  toolbar.
+- **Markers** — **M** (or double-click the ruler) adds a marker;
+  right-click a marker to remove it.
+- **Delete** — Delete key removes the selected clip (undoable).
+
 ## Interaction rules
 
-- **Keyboard first**: J/K/L shuttle, I/O in/out (M2), Q/W ripple trim (M2),
-  Space play, +/- zoom, Ctrl+Z/Ctrl+Y undo/redo, Ctrl+K palette, Ctrl+,
-  settings. Remappable in Settings ▸ Keyboard (M8); ships with "Classic"
-  and "Simple" keymaps.
+- **Keyboard first**: J/K/L shuttle, I/O in/out (M2), Q/W ripple trim,
+  M marker, Delete remove clip, Space play, +/- zoom, Ctrl+Z/Ctrl+Y
+  undo/redo, Ctrl+K palette, Ctrl+, settings. Remappable in Settings ▸
+  Keyboard (M8); ships with "Classic" and "Simple" keymaps.
 - **Undo clarity**: buttons read "Undo: Rename project" (the command's
   action name), not just "Undo".
 - **Snapping feedback**: visible snap line + short highlight flash (M2).

@@ -109,6 +109,8 @@ private:
     void deleteSelectedClip();
     void onTrimRequested(const QList<ClipPatch> &patches);
     void rippleTrim(bool rightSide); // Q / W at the playhead
+    void addMarkerAt(qint64 frame);
+    void removeMarkerAt(qint64 frame);
     void refreshTimeline();
     void generateWaveformThumbs(const QString &path);
     void onEngineFrame(const QImage &img, int frame);

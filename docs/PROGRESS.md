@@ -3,6 +3,66 @@
 *Verified-phase log (working rule #2). Every entry: build clean (zero
 warnings) → tests → targeted checks → evidence.*
 
+## 2026-10-13 — M2 Timeline editing: verified ✅
+
+**Scope delivered**
+
+- **Every edit is a command** (M2 exit criterion): AddClip, Relink,
+  DeleteClip, TrimClips (trim + roll), AddMarker, RemoveMarker — all
+  undoable with human-readable action names on the Undo/Redo buttons.
+- **Autosave wired to every command**: `UndoStack::onChanged` →
+  `setProjectChanged()` → 60 s autosave + crash-recovery sidecar covers
+  every edit, undo, and redo.
+- **Clip selection**: click to select (accent outline), click empty
+  space to deselect; Inspector shows the selected clip (source, type,
+  In/Out/Start/Duration in SMPTE, missing-media warning); Delete key
+  removes the selected clip (re-inserts at the same position on undo).
+- **Trimming**: clip edges are grabbable (split cursor, 5 px tolerance)
+  with live preview; left edge moves in+offset (clamped to timeline
+  start and min duration), right edge moves out (clamped to source
+  length); a shared boundary drags as a **roll** (grabbed from either
+  side, duration sum preserved, clamped to both sources).
+- **Q/W ripple trim**: W trims the start of the clip at the playhead to
+  the playhead and shifts later clips right; Q trims the end and shifts
+  later clips left.
+- **Snapping with visible feedback** (M2 exit criterion): while
+  trimming, the moving edge is pulled to nearby clip edges or the
+  playhead (4 px) and a violet snap line is drawn; toggle in the
+  timeline toolbar.
+- **Markers** (ruler, schema v1 — already serialized): M key or
+  double-click on the ruler adds a violet marker; right-click a marker
+  removes it; all undoable; `ProjectModel.MarkersRoundTrip` test.
+
+**Verification (g++ 14.2, Qt 6.8.2, FFmpeg 7.1.5)**
+
+- Clean rebuild: **0 errors, 0 warnings**.
+- ctest: **45/45 pass** — new: `UndoStack.HundredStepRoundTrip`
+  (M2 exit criterion: 100 steps undo → redo, state verified at every
+  step), `UndoStack.ChangedCallbackFires`,
+  `ProjectModel.MarkersRoundTrip`, and the extended
+  `Guismoke.MediaPipeline` (24 checks: select/delete/undo/redo/
+  deselect, W/Q trims, second-clip append, roll drag +4 frames, marker
+  add/remove/undo, marker painted on the ruler via pixel check).
+- `--selftest` with media fixture: **PASS** (19 checks).
+
+**Bugs found & fixed**
+
+- Q-trim source math: `out = in + (playhead − offset)` (was ignoring a
+  non-zero in point).
+- Roll grab detection from the right clip's left edge (shared boundary).
+- Roll/trim clamps: timeline start (left edge), source length (right
+  edge and both clips in a roll), in ≥ 0.
+- Drag patches were captured after the drag state reset → empty
+  patches, no-op edits.
+- Canvas signals (scrub/select/trim/markers) had to be forwarded through
+  `TimelineWidget` — previously declared but never connected.
+
+**Not done / next**
+
+- Slip/slide trims (in/out or offset without length change) — M2.5 or
+  M3 if time-box allows.
+- M3 Render: compositor, transitions, frame cache.
+
 ## 2026-10-13 — M1 Media: verified ✅
 
 **Scope delivered**

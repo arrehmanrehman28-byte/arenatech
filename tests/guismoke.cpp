@@ -7,6 +7,7 @@
 #include <QEventLoop>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QPixmap>
 #include <QTimer>
 #include <cstdio>
 
@@ -236,6 +237,49 @@ int main(int argc, char **argv)
     check(v1b->clips.size() == 1 && v1b->clips[0].in == 0 &&
               v1b->clips[0].out == 60 && v1b->clips[0].offset == 0,
           "undo x5 restores original clip");
+
+    // --- M2.4: markers -----------------------------------------------------
+    // M key adds a marker at the playhead.
+    w.seekToFrame(10);
+    key(Qt::Key_M);
+    spin(50);
+    check(proj->markers.size() == 1 && proj->markers.first().time == 10,
+          "M adds marker at playhead");
+    // Double-click the ruler adds a marker at frame 40 (x = 56 + 40/2 = 76).
+    {
+        QMouseEvent ev(QEvent::MouseButtonDblClick, QPointF(76, 10), QPointF(76, 10),
+                       Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(canvas, &ev);
+        spin(50);
+    }
+    check(proj->markers.size() == 2, "double-click ruler adds marker");
+    // Right-click the frame-40 marker removes it.
+    {
+        QMouseEvent rc(QEvent::MouseButtonPress, QPointF(76, 10), QPointF(76, 10),
+                       Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+        QApplication::sendEvent(canvas, &rc);
+        spin(50);
+    }
+    check(proj->markers.size() == 1 && proj->markers.first().time == 10,
+          "right-click removes marker");
+    // Visual: the frame-10 marker is painted as violet on the ruler
+    // (line x = 56 + 10/2 = 61, y in [2,14]).
+    {
+        const QPixmap pm = canvas->grab();
+        bool violet = false;
+        for (int y = 2; y <= 14 && !violet; ++y)
+            for (int dx = -2; dx <= 2 && !violet; ++dx) {
+                const QColor c = pm.toImage().pixelColor(61 + dx, y);
+                if (c.red() > 120 && c.red() < 200 && c.blue() > 220 &&
+                    c.green() < 150)
+                    violet = true;
+            }
+        check(violet, "marker painted on ruler");
+    }
+    // Undo the three marker edits (add 10, add 40, remove 40).
+    for (int i = 0; i < 3; ++i) w.undo();
+    spin(50);
+    check(proj->markers.isEmpty(), "undo x3 removes all markers");
 
     if (g_failures == 0) {
         printf("GUISOKE PASS\n");

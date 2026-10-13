@@ -340,6 +340,9 @@ void MainWindow::buildDocks()
         refreshTimeline();
     });
     connect(m_timeline, &TimelineWidget::trimRequested, this, &MainWindow::onTrimRequested);
+    connect(m_timeline, &TimelineWidget::markerAddRequested, this, &MainWindow::addMarkerAt);
+    connect(m_timeline, &TimelineWidget::markerRemoveRequested, this,
+            &MainWindow::removeMarkerAt);
 
     m_inspector = new InspectorWidget;
     auto *inspectorDock = new QDockWidget;
@@ -658,6 +661,9 @@ void MainWindow::refreshProjectViews()
     setWindowTitle(currentTitle());
     if (m_project) {
         m_timeline->setProject(true, m_project->fps);
+        QList<qint64> markerFrames;
+        for (const Marker &m : m_project->markers) markerFrames.append(m.time);
+        m_timeline->canvas()->setMarkers(markerFrames);
         m_monitor->setAspect(m_project->width, m_project->height);
         m_fps->setText(arenaTr("status.fps", {{QStringLiteral("fps"), QString::number(m_project->fps, 'g', 3)}}));
         m_inspector->setProjectName(m_project->name, m_project->fps, m_project->width, m_project->height);
@@ -838,6 +844,51 @@ struct AddClipCommand : public Command {
         return arenaTr("media.clipAdded", {{QStringLiteral("track"), track->name}});
     }
     int retainedBytes() const override { return 384; }
+};
+
+// Add / remove a timeline marker (undoable).
+struct AddMarkerCommand : public Command {
+    Project *project = nullptr;
+    qint64 time = 0;
+    AddMarkerCommand(Project *p, qint64 t) : project(p), time(t) {}
+    void execute() override
+    {
+        Marker m;
+        m.time = time;
+        project->markers.append(m);
+    }
+    void undo() override
+    {
+        for (int i = project->markers.size() - 1; i >= 0; --i)
+            if (project->markers[i].time == time) {
+                project->markers.removeAt(i);
+                return;
+            }
+    }
+    QString actionName() const override { return arenaTr("timeline.markerAdded"); }
+    int retainedBytes() const override { return 64; }
+};
+
+struct RemoveMarkerCommand : public Command {
+    Project *project = nullptr;
+    qint64 time = 0;
+    RemoveMarkerCommand(Project *p, qint64 t) : project(p), time(t) {}
+    void execute() override
+    {
+        for (int i = project->markers.size() - 1; i >= 0; --i)
+            if (project->markers[i].time == time) {
+                project->markers.removeAt(i);
+                return;
+            }
+    }
+    void undo() override
+    {
+        Marker m;
+        m.time = time;
+        project->markers.append(m);
+    }
+    QString actionName() const override { return arenaTr("timeline.markerRemoved"); }
+    int retainedBytes() const override { return 64; }
 };
 
 // Apply one or two clip geometry patches (trim / roll; undoable).
@@ -1189,6 +1240,9 @@ void MainWindow::refreshTimeline()
     }
     m_timeline->canvas()->setClips(views);
     m_timeline->canvas()->setPlayhead(m_playhead);
+    QList<qint64> markerFrames;
+    for (const Marker &m : m_project->markers) markerFrames.append(m.time);
+    m_timeline->canvas()->setMarkers(markerFrames);
 
     // Inspector: the selected clip, or the project summary.
     for (const Track &t : m_project->tracks) {
@@ -1339,7 +1393,28 @@ void MainWindow::keyPressEvent(QKeyEvent *e)
         e->accept();
         return;
     }
+    if (e->key() == Qt::Key_M) {
+        addMarkerAt(m_playhead);
+        e->accept();
+        return;
+    }
     QWidget::keyPressEvent(e);
+}
+
+void MainWindow::addMarkerAt(qint64 frame)
+{
+    if (!m_project || frame < 0) return;
+    commitCommand(std::make_unique<AddMarkerCommand>(m_project.get(), frame));
+}
+
+void MainWindow::removeMarkerAt(qint64 frame)
+{
+    if (!m_project) return;
+    for (int i = m_project->markers.size() - 1; i >= 0; --i)
+        if (m_project->markers[i].time == frame) {
+            commitCommand(std::make_unique<RemoveMarkerCommand>(m_project.get(), frame));
+            return;
+        }
 }
 
 void MainWindow::onTrimRequested(const QList<ClipPatch> &patches)

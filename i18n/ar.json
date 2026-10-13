@@ -190,6 +190,8 @@
     "status.saved": "تم الحفظ {time}",
     "subtitles.filter": "ملفات الترجمة النصية (*.srt *.vtt *.ass);;كل الملفات (*)",
     "timeline.magnet": "مغناطيسي",
+    "timeline.markerAdded": "تمت إضافة علامة",
+    "timeline.markerRemoved": "تمت إزالة علامة",
     "timeline.markers": "علامات",
     "timeline.noSelection": "لا يوجد مقطع محدد",
     "timeline.rollEdit": "تعديل التمرير",

@@ -190,6 +190,8 @@
     "status.saved": "Saved {time}",
     "subtitles.filter": "Subtitles (*.srt *.vtt *.ass);;All files (*)",
     "timeline.magnet": "Magnetic",
+    "timeline.markerAdded": "marker added",
+    "timeline.markerRemoved": "marker removed",
     "timeline.markers": "Markers",
     "timeline.noSelection": "No clip selected",
     "timeline.rollEdit": "roll edit",

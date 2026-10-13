@@ -133,6 +133,23 @@ TEST(UndoStack, MemoryCapEvictsOldest)
 }
 
 
+TEST(ProjectModel, MarkersRoundTrip)
+{
+    auto project = std::make_unique<Project>();
+    Marker m1;
+    m1.time = 30;
+    m1.label = QStringLiteral("intro");
+    Marker m2;
+    m2.time = 300;
+    project->markers = {m1, m2};
+    QJsonObject o = project->toJson();
+    Project loaded = Project::fromJson(o);
+    ASSERT_EQ(loaded.markers.size(), 2);
+    EXPECT_EQ(loaded.markers[0].time, 30);
+    EXPECT_EQ(loaded.markers[0].label, QStringLiteral("intro"));
+    EXPECT_EQ(loaded.markers[1].time, 300);
+}
+
 // M2 exit criterion: every edit is a command; 100 steps undo/redo round-trip.
 TEST(UndoStack, HundredStepRoundTrip)
 {

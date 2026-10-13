@@ -190,6 +190,8 @@
     "status.saved": "محفوظ {time}",
     "subtitles.filter": "زیر عنوان فائلیں (*.srt *.vtt *.ass);;تمام فائلیں (*)",
     "timeline.magnet": "میگناٹیک",
+    "timeline.markerAdded": "مارکر شامل ہوئی",
+    "timeline.markerRemoved": "مارکر حذف ہوئی",
     "timeline.markers": "مارکرز",
     "timeline.noSelection": "کوئی کلیپ منتخب نہیں",
     "timeline.rollEdit": "رول ایڈیٹ",

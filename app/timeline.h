@@ -48,6 +48,7 @@ public:
     // Clips live on the first (video) track.
     void setClips(const QList<ClipView> &clips);
     void setPlayhead(qint64 frame);
+    void setMarkers(const QList<qint64> &frames); // ruler markers
     double framesPerPx() const { return m_framesPerPx * m_zoom; }
     qint64 frameAtX(double x) const;
     void setSnapEnabled(bool on) { m_snapEnabled = on; }
@@ -59,6 +60,8 @@ signals:
     void clipDeselected();                   // click on empty timeline space
     void trimRequested(const QList<ClipPatch> &patches); // edge drag / roll
     void snapLineChanged(qint64 frame, bool on);         // visual snap feedback
+    void markerAddRequested(qint64 frame);   // double-click on the ruler
+    void markerRemoveRequested(qint64 frame); // right-click a marker
 
 protected:
     void paintEvent(QPaintEvent *) override;
@@ -66,6 +69,7 @@ protected:
     void mousePressEvent(QMouseEvent *) override;
     void mouseMoveEvent(QMouseEvent *) override;
     void mouseReleaseEvent(QMouseEvent *) override;
+    void mouseDoubleClickEvent(QMouseEvent *) override;
 
 private:
     double m_fps = 30.0;
@@ -95,6 +99,7 @@ private:
     qint64 m_pRollOffset = 0, m_pRollIn = 0, m_pRollOut = 0;
     bool m_snapEnabled = true;
     qint64 m_snapLine = -1; // frame the snap line is drawn at (-1 = off)
+    QList<qint64> m_markers;
     bool m_moved = false;   // whether the drag actually changed values
     static constexpr int kEdgeTol = 5; // px grab tolerance on clip edges
     static constexpr qint64 kMinDur = 1; // frames
@@ -123,6 +128,8 @@ signals:
     void clipDeselected();
     void trimRequested(const QList<ClipPatch> &patches);
     void snapLineChanged(qint64 frame, bool on);
+    void markerAddRequested(qint64 frame);
+    void markerRemoveRequested(qint64 frame);
 
 private:
     QToolButton *m_snap;

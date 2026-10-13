@@ -49,6 +49,12 @@ void TimelineCanvas::setPlayhead(qint64 frame)
     update();
 }
 
+void TimelineCanvas::setMarkers(const QList<qint64> &frames)
+{
+    m_markers = frames;
+    update();
+}
+
 qint64 TimelineCanvas::frameAtX(double x) const
 {
     const int headerW = 56;
@@ -225,6 +231,20 @@ void TimelineCanvas::mousePressEvent(QMouseEvent *e)
         QWidget::mousePressEvent(e);
         return;
     }
+    // Right-click a ruler marker to remove it.
+    if (e->button() == Qt::RightButton && e->position().y() < 24) {
+        const double fpp = framesPerPx();
+        for (qint64 m : m_markers) {
+            const double mx = 56.0 + double(m) / fpp;
+            if (std::abs(e->position().x() - mx) <= 4.0) {
+                emit markerRemoveRequested(m);
+                e->accept();
+                return;
+            }
+        }
+        QWidget::mousePressEvent(e);
+        return;
+    }
     if (e->button() != Qt::LeftButton || e->position().x() <= 56) {
         QWidget::mousePressEvent(e);
         return;
@@ -303,6 +323,17 @@ void TimelineCanvas::mouseReleaseEvent(QMouseEvent *e)
         return;
     }
     QWidget::mouseReleaseEvent(e);
+}
+
+void TimelineCanvas::mouseDoubleClickEvent(QMouseEvent *e)
+{
+    if (m_hasProject && e->button() == Qt::LeftButton &&
+        e->position().y() < 24 && e->position().x() > 56) {
+        emit markerAddRequested(frameAtX(e->position().x()));
+        e->accept();
+        return;
+    }
+    QWidget::mouseDoubleClickEvent(e);
 }
 
 void TimelineCanvas::mouseMoveEvent(QMouseEvent *e)
@@ -448,6 +479,19 @@ void TimelineCanvas::paintEvent(QPaintEvent *)
         }
     }
 
+    // Ruler markers (violet, per spec's AI/violet accent for optional items).
+    for (qint64 m : m_markers) {
+        const double mx = 56.0 + double(m) / fpp;
+        if (mx < 56 || mx > width()) continue;
+        p.setPen(QPen(QColor(0x9B, 0x6D, 0xFF), 1.2));
+        p.drawLine(QPointF(mx, 2), QPointF(mx, 14));
+        p.setBrush(QColor(0x9B, 0x6D, 0xFF));
+        p.setPen(Qt::NoPen);
+        QPolygonF tri;
+        tri << QPointF(mx - 4, 14) << QPointF(mx + 4, 14) << QPointF(mx, 20);
+        p.drawPolygon(tri);
+    }
+
     // Snap feedback: violet line while a trim edge is snapped (M2).
     if (m_snapLine >= 0) {
         const double sx = headerW + double(m_snapLine) / fpp;
@@ -524,6 +568,10 @@ TimelineWidget::TimelineWidget(QWidget *parent) : QWidget(parent)
     connect(m_canvas, &TimelineCanvas::clipDeselected, this, &TimelineWidget::clipDeselected);
     connect(m_canvas, &TimelineCanvas::trimRequested, this, &TimelineWidget::trimRequested);
     connect(m_canvas, &TimelineCanvas::snapLineChanged, this, &TimelineWidget::snapLineChanged);
+    connect(m_canvas, &TimelineCanvas::markerAddRequested,
+            this, &TimelineWidget::markerAddRequested);
+    connect(m_canvas, &TimelineCanvas::markerRemoveRequested,
+            this, &TimelineWidget::markerRemoveRequested);
 }
 
 void TimelineWidget::retranslateUi()

@@ -11,7 +11,7 @@ Status legend: `not started` / `in progress` / `verified` (build + tests green, 
 |---|-------|-----------------|--------|
 | M0 | Skeleton | CMake, Qt main window + dockable layout, theme tokens, settings, i18n loader (EN + AR), logging, autosave stub, CI | **in progress** |
 | M1 | Media | FFmpeg import, decode, A/V-synced preview, thumbnails, waveforms, missing-media relink | not started |
-| M2 | Timeline | Tracks, clips, ripple/roll/slip/slide trims, snapping, markers, undo/redo, autosave/recovery | not started |
+| M2 | Timeline | Tracks, clips, ripple/roll/slip/slide trims, snapping, markers, undo/redo, autosave/recovery | verified (slip/slide deferred) |
 | M3 | Rendering | D3D11/OpenGL compositor, transforms, opacity, transitions, basic color, frame cache (LRU 512 MB) | not started |
 | M4 | Export | Presets, hardware encode with software fallback, batch queue with progress/ETA/cancel | not started |
 | M5 | Subtitles | SRT/VTT/ASS import-export, multi-language tracks (BCP-47), burn-in, RTL, font fallback, reading-speed checks | not started |
