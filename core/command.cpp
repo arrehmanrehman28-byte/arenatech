@@ -58,6 +58,7 @@ void UndoStack::push(std::unique_ptr<Command> cmd)
     for (Command *c : m_redo) delete c;
     m_redo.clear();
     evictToLimits();
+    if (onChanged) onChanged();
 }
 
 QString UndoStack::undoActionName() const
@@ -75,6 +76,7 @@ bool UndoStack::undo()
     Command *cmd = m_undo.takeLast();
     cmd->undo();
     m_redo.append(cmd);
+    if (onChanged) onChanged();
     return true;
 }
 
@@ -85,6 +87,7 @@ bool UndoStack::redo()
     cmd->execute();
     m_undo.append(cmd);
     evictToLimits();
+    if (onChanged) onChanged();
     return true;
 }
 
@@ -94,6 +97,7 @@ void UndoStack::clear()
     for (Command *c : m_redo) delete c;
     m_undo.clear();
     m_redo.clear();
+    if (onChanged) onChanged();
 }
 
 } // namespace arena

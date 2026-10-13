@@ -46,6 +46,7 @@ MainWindow::MainWindow(Themer *themer, QWidget *parent)
     connect(m_engine, &PlaybackEngine::positionChanged, this, &MainWindow::onEnginePosition);
     connect(m_engine, &PlaybackEngine::ended, this, &MainWindow::onEngineEnded);
     connect(m_engine, &PlaybackEngine::playStateChanged, this, &MainWindow::onPlayStateChanged);
+    m_undoStack.onChanged = [this] { noteHistoryChanged(); };
     setWindowTitle(QStringLiteral("Arena Edit"));
     setMinimumSize(1100, 680);
     resize(1440, 860);
@@ -96,8 +97,8 @@ void MainWindow::buildActions()
     m_redoAct = new QAction(this);
     m_undoAct->setShortcut(QKeySequence::Undo);
     m_redoAct->setShortcut(QKeySequence::Redo);
-    connect(m_undoAct, &QAction::triggered, this, [this] { m_undoStack.undo(); refreshUndoButtons(); });
-    connect(m_redoAct, &QAction::triggered, this, [this] { m_undoStack.redo(); refreshUndoButtons(); });
+    connect(m_undoAct, &QAction::triggered, this, [this] { m_undoStack.undo(); });
+    connect(m_redoAct, &QAction::triggered, this, [this] { m_undoStack.redo(); });
 
     auto *newAct = new QAction(this);
     newAct->setShortcut(QKeySequence::New);
@@ -485,8 +486,8 @@ void MainWindow::registerCommands()
         if (!f.isEmpty()) openProjectFile(f);
     });
     add(QStringLiteral("cmd.save"), QStringLiteral("Ctrl+S"), [this] { saveProjectFile(); });
-    add(QStringLiteral("cmd.undo"), QStringLiteral("Ctrl+Z"), [this] { m_undoStack.undo(); refreshUndoButtons(); });
-    add(QStringLiteral("cmd.redo"), QStringLiteral("Ctrl+Y"), [this] { m_undoStack.redo(); refreshUndoButtons(); });
+    add(QStringLiteral("cmd.undo"), QStringLiteral("Ctrl+Z"), [this] { m_undoStack.undo(); });
+    add(QStringLiteral("cmd.redo"), QStringLiteral("Ctrl+Y"), [this] { m_undoStack.redo(); });
     add(QStringLiteral("cmd.snap"), QString(), [this] {
         m_settings->setSnapEnabled(!m_settings->snapEnabled());
     });
@@ -765,6 +766,20 @@ void MainWindow::refreshUndoButtons()
                            : arenaTr("edit.redo"));
 }
 
+void MainWindow::commitCommand(std::unique_ptr<Command> cmd)
+{
+    if (!cmd) return;
+    // The stack's onChanged callback marks the project dirty (autosave) and
+    // refreshes the undo/redo UI.
+    m_undoStack.push(std::move(cmd));
+}
+
+void MainWindow::noteHistoryChanged()
+{
+    m_autosave->setProjectChanged();
+    refreshUndoButtons();
+}
+
 void MainWindow::tickSecond()
 {
     m_mem->setText(arenaTr("status.mem", {{QStringLiteral("size"), formatBytes(processResidentBytes())}}));
@@ -988,7 +1003,7 @@ void MainWindow::addClipToTimeline(const QString &path)
     clip.out = durFrames;
     clip.offset = offset;
 
-    m_undoStack.push(std::make_unique<AddClipCommand>(vtrack, clip));
+    commitCommand(std::make_unique<AddClipCommand>(vtrack, clip));
     m_currentSource = path;
     selectClipAt(path, offset);
     generateWaveformThumbs(path);
@@ -1170,7 +1185,7 @@ void MainWindow::relinkMedia(const QString &oldPath)
     if (f.isEmpty() || f == oldPath) return;
     m_mediaBin->replacePath(oldPath, f);
     if (m_project) {
-        m_undoStack.push(std::make_unique<RelinkCommand>(m_project.get(), oldPath, f));
+        commitCommand(std::make_unique<RelinkCommand>(m_project.get(), oldPath, f));
         m_autosave->setProjectChanged();
     }
     if (m_currentSource == oldPath) m_currentSource = f;

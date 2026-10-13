@@ -38,6 +38,11 @@ public:
     bool redo();
     void clear();
 
+    // Invoked after any push/undo/redo that changes the stack, so the owner
+    // can mark the project dirty (autosave/recovery) and refresh the
+    // undo/redo UI. Pure C++ callback keeps core free of Qt.
+    std::function<void()> onChanged;
+
 private:
     // Raw pointers, manually owned: QList cannot hold move-only types.
     void evictToLimits();

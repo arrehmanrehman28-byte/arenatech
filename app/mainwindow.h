@@ -81,6 +81,11 @@ private:
     void askAiFromPalette(const QString &text);
     void enableAiWithNotice();
     void refreshUndoButtons();
+    // Execute a command and push it, then mark the project dirty (autosave)
+    // and refresh the undo/redo UI. Every timeline/project edit goes through
+    // this so autosave + crash-recovery cover every change (spec M2).
+    void commitCommand(std::unique_ptr<Command> cmd);
+    void noteHistoryChanged(); // after undo/redo
     void refreshProjectViews();
     void checkRecoveryFor(const QString &path);
     void tickSecond();

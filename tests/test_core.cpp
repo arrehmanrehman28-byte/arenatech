@@ -132,6 +132,65 @@ TEST(UndoStack, MemoryCapEvictsOldest)
     EXPECT_LE(stack.undoDepth(), 3);
 }
 
+
+// M2 exit criterion: every edit is a command; 100 steps undo/redo round-trip.
+TEST(UndoStack, HundredStepRoundTrip)
+{
+    auto project = std::make_unique<Project>();
+    Track track;
+    track.id = QStringLiteral("V1");
+    track.type = TrackType::Video;
+    track.name = QStringLiteral("V1");
+    project->tracks.append(track);
+    project->name = QStringLiteral("P");
+
+    UndoStack stack;
+    stack.onChanged = nullptr;
+    // 100 distinct, invertible edits (rename + marker adds/undos interleaved
+    // would be app-level; rename is the pure-core invertible op).
+    for (int i = 0; i < 100; ++i)
+        stack.push(makeRenameProjectCommand(project.get(), QStringLiteral("S%1").arg(i)));
+    EXPECT_EQ(project->name, QStringLiteral("S99"));
+    EXPECT_EQ(stack.undoDepth(), 100);
+
+    // Undo all the way back.
+    for (int i = 99; i >= 0; --i) {
+        ASSERT_TRUE(stack.undo()) << "undo failed at step " << i;
+        if (i == 0)
+            EXPECT_EQ(project->name, QStringLiteral("P"));
+        else
+            EXPECT_EQ(project->name, QStringLiteral("S%1").arg(i - 1));
+    }
+    EXPECT_FALSE(stack.canUndo());
+    EXPECT_EQ(stack.redoDepth(), 100);
+
+    // Redo all the way forward.
+    for (int i = 0; i < 100; ++i) {
+        ASSERT_TRUE(stack.redo()) << "redo failed at step " << i;
+        EXPECT_EQ(project->name, QStringLiteral("S%1").arg(i));
+    }
+    EXPECT_FALSE(stack.canRedo());
+    EXPECT_EQ(project->name, QStringLiteral("S99"));
+}
+
+TEST(UndoStack, ChangedCallbackFires)
+{
+    auto project = std::make_unique<Project>();
+    project->name = QStringLiteral("A");
+    UndoStack stack;
+    int calls = 0;
+    stack.onChanged = [&calls] { ++calls; };
+    stack.push(makeRenameProjectCommand(project.get(), QStringLiteral("B")));
+    EXPECT_EQ(calls, 1);
+    stack.undo();
+    EXPECT_EQ(calls, 2);
+    stack.redo();
+    EXPECT_EQ(calls, 3);
+    stack.clear();
+    EXPECT_EQ(calls, 4);
+    EXPECT_FALSE(stack.canUndo());
+}
+
 TEST(Settings, DefaultsAreConservative)
 {
     // AI must be OFF by default; core never depends on AI.
