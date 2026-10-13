@@ -3,10 +3,14 @@
 // media needed). The FFmpeg-dependent tests skip in non-FFmpeg builds.
 #include <gtest/gtest.h>
 
+#include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QFileInfo>
 #include <QUuid>
 
 #include "exporter.h"
+#include "exportqueue.h"
 #include "media.h"
 
 using namespace arena;
@@ -257,4 +261,143 @@ TEST(Exporter, BatchThreePresets)
     EXPECT_GE(highBytes, balBytes);
     EXPECT_GT(webmBytes, 0);
     QDir().remove(dir);
+}
+
+// --- ExportQueue (worker-thread sequencing) -----------------------------------
+// Queued signal delivery (worker -> UI) needs a running event loop, so these
+// fixtures own a QCoreApplication and spin it by hand.
+
+namespace {
+
+class QueueApp : public ::testing::Test {
+protected:
+    void SetUp() override
+    {
+        static int argc = 1;
+        static char argv0[] = "arena_tests";
+        char *argv[] = {argv0, nullptr};
+        if (!app)
+            app = std::make_unique<QCoreApplication>(argc, argv);
+    }
+    void TearDown() override { app.reset(); }
+
+    static std::unique_ptr<QCoreApplication> app;
+
+    bool waitUntil(std::function<bool()> pred, int timeoutMs = 120000)
+    {
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < timeoutMs) {
+            app->processEvents(QEventLoop::AllEvents, 20);
+            if (pred())
+                return true;
+        }
+        return pred();
+    }
+};
+
+std::unique_ptr<QCoreApplication> QueueApp::app;
+
+ExportQueue::Job makeQueueJob(const QString &preset, const QString &out, int frames)
+{
+    auto p = makeProject();
+    Clip a;
+    a.id = "a";
+    a.sourceRef = "a.mp4";
+    a.in = 0;
+    a.out = frames;
+    a.offset = 0;
+    p->tracks.first().clips.append(a);
+    ExportQueue::Job j;
+    j.name = preset;
+    j.settings = Exporter::preset(preset, *p);
+    j.settings.outputPath = out;
+    j.project = *p;
+    j.fetch = kFetch;
+    j.audio = [](const QString &, qint64 inFrame, qint64 outFrame, int rate, int ch,
+                 QVector<float> *buf) { return synthAudio("", inFrame, outFrame, rate, ch, buf); };
+    return j;
+}
+
+} // namespace
+
+TEST_F(QueueApp, RunsTwoJobsInOrderAndSucceeds)
+{
+    if (!Exporter::isAvailable())
+        GTEST_SKIP() << "FFmpeg build required";
+    const QString out1 = tmpFile("q1.mp4");
+    const QString out2 = tmpFile("q2.webm");
+    ExportQueue q;
+    const int i1 = q.addJob(makeQueueJob("mp4-h264-balanced", out1, 30));
+    const int i2 = q.addJob(makeQueueJob("webm-vp9", out2, 30));
+
+    QList<int> finishedOrder;
+    int finishedCount = 0;
+    bool allDone = false;
+    QObject::connect(&q, &ExportQueue::jobFinished, &q,
+                     [&](int idx, bool ok, const QString &) {
+                         finishedOrder.append(idx);
+                         if (ok) ++finishedCount;
+                     });
+    QObject::connect(&q, &ExportQueue::queueFinished, &q, [&] { allDone = true; });
+    q.start();
+    // Wait for queueFinished (not !isRunning): the job state updates ride on
+    // queued signals that must be delivered first.
+    ASSERT_TRUE(waitUntil([&] { return allDone; }));
+    EXPECT_EQ(finishedOrder, (QList<int>{i1, i2})); // sequential, in order
+    EXPECT_EQ(finishedCount, 2);
+    EXPECT_EQ(q.job(i1).state, ExportQueue::Job::State::Done);
+    EXPECT_EQ(q.job(i2).state, ExportQueue::Job::State::Done);
+    EXPECT_EQ(q.job(i1).framesDone, 30);
+    EXPECT_EQ(q.job(i2).framesDone, 30);
+    EXPECT_TRUE(QFileInfo::exists(out1));
+    EXPECT_TRUE(QFileInfo::exists(out2));
+    EXPECT_TRUE(q.clearFinished().isEmpty()); // both done -> all removed
+    EXPECT_EQ(q.jobCount(), 0);
+}
+
+TEST_F(QueueApp, CancelStopsRunningJob)
+{
+    if (!Exporter::isAvailable())
+        GTEST_SKIP() << "FFmpeg build required";
+    const QString out = tmpFile("cancel2.mp4");
+    ExportQueue q;
+    const int idx = q.addJob(makeQueueJob("mp4-h264-balanced", out, 90));
+    bool allDone = false;
+    QObject::connect(&q, &ExportQueue::jobProgress, &q,
+                     [&q](int, qint64, qint64) { q.cancelCurrent(); });
+    QObject::connect(&q, &ExportQueue::queueFinished, &q, [&] { allDone = true; });
+    q.start();
+    ASSERT_TRUE(waitUntil([&] { return allDone; }));
+    EXPECT_EQ(q.job(idx).state, ExportQueue::Job::State::Cancelled);
+    EXPECT_LT(q.job(idx).framesDone, 90);
+    EXPECT_FALSE(QFileInfo::exists(out)); // no broken file left behind
+}
+
+TEST_F(QueueApp, ProgressBoundedAndCompletes)
+{
+    if (!Exporter::isAvailable())
+        GTEST_SKIP() << "FFmpeg build required";
+    const QString out = tmpFile("prog.mp4");
+    ExportQueue q;
+    q.addJob(makeQueueJob("mp4-h264-balanced", out, 60));
+    bool bounded = true;
+    qint64 lastDone = -1;
+    qint64 total = -1;
+    QObject::connect(&q, &ExportQueue::jobProgress, &q,
+                     [&](int, qint64 done, qint64 t) {
+                         if (lastDone >= 0 && done < lastDone)
+                             bounded = false;
+                         lastDone = done;
+                         total = t;
+                         if (done < 0 || done > t)
+                             bounded = false;
+                     });
+    bool allDone = false;
+    QObject::connect(&q, &ExportQueue::queueFinished, &q, [&] { allDone = true; });
+    q.start();
+    ASSERT_TRUE(waitUntil([&] { return allDone; }));
+    EXPECT_TRUE(bounded);
+    EXPECT_EQ(total, 60);
+    EXPECT_EQ(q.progress(), 1.0); // everything finished
 }

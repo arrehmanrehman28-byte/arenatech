@@ -5,16 +5,21 @@
 // playback exercises the wall-clock fallback path.
 #include <QApplication>
 #include <QComboBox>
+#include <QDir>
 #include <QDoubleSpinBox>
 #include <QEventLoop>
+#include <QFileInfo>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPixmap>
 #include <QPushButton>
+#include <QUuid>
 #include <QTimer>
 #include <cstdio>
 
+#include "exportdialog.h"
+#include "exportqueue.h"
 #include "i18n.h"
 #include "mainwindow.h"
 #include "panels.h"
@@ -372,6 +377,46 @@ int main(int argc, char **argv)
     for (auto *l : w.findChildren<QLabel *>())
         if (l->text().startsWith(QStringLiteral("Dropped frames"))) droppedLabel = true;
     check(droppedLabel, "M3: dropped-frames status label present");
+
+    // --- M4: export dialog + batch queue (two presets, 25% scale) -----------
+    w.openExportDialog();
+    ExportDialog *dlg = w.exportDialog();
+    check(dlg != nullptr, "M4: export dialog opened");
+    if (dlg) {
+        const QString outDir =
+            QDir::tempPath() + "/arena_export_smoke_" +
+            QUuid::createUuid().toString(QUuid::WithoutBraces);
+        dlg->dirEditForTest()->setText(outDir);
+        dlg->scaleComboForTest()->setCurrentIndex(0); // 25% for speed
+        for (int i = 0; i < dlg->presetListForTest()->count(); ++i) {
+            auto *it = dlg->presetListForTest()->item(i);
+            const bool keep = it->text().startsWith(QStringLiteral("mp4-h264-balanced")) ||
+                              it->text().startsWith(QStringLiteral("webm-vp9"));
+            it->setCheckState(keep ? Qt::Checked : Qt::Unchecked);
+        }
+        dlg->startForTest();
+        bool finished = false;
+        for (int i = 0; i < 600 && !finished; ++i) { // up to 60 s
+            spin(100);
+            finished = !dlg->running();
+        }
+        check(finished, "M4: export queue finished");
+        int done = 0;
+        for (int i = 0; i < dlg->queue()->jobCount(); ++i)
+            if (dlg->queue()->job(i).state == ExportQueue::Job::State::Done) ++done;
+        check(done == 2, "M4: both export jobs done");
+        bool filesOk = true;
+        for (int i = 0; i < dlg->queue()->jobCount(); ++i) {
+            const auto &j = dlg->queue()->job(i);
+            if (!QFileInfo::exists(j.settings.outputPath) ||
+                QFileInfo(j.settings.outputPath).size() <= 0)
+                filesOk = false;
+        }
+        check(filesOk, "M4: export files exist and are non-empty");
+        QDir().remove(outDir);
+        dlg->close();
+        spin(50);
+    }
 
     if (g_failures == 0) {
         printf("GUISOKE PASS\n");

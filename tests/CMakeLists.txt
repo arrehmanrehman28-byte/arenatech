@@ -38,5 +38,5 @@ if(ARENA_ENABLE_FFMPEG AND EXISTS "${CMAKE_SOURCE_DIR}/tests/fixtures/clip01.mp4
     target_link_libraries(arena_guismoke PRIVATE arena_app_lib)
     add_test(NAME Guismoke.MediaPipeline
              COMMAND arena_guismoke "${CMAKE_SOURCE_DIR}/tests/fixtures/clip01.mp4")
-    set_tests_properties(Guismoke.MediaPipeline PROPERTIES TIMEOUT 60)
+    set_tests_properties(Guismoke.MediaPipeline PROPERTIES TIMEOUT 240)
 endif()

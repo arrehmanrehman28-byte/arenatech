@@ -13,7 +13,7 @@ Status legend: `not started` / `in progress` / `verified` (build + tests green, 
 | M1 | Media | FFmpeg import, decode, A/V-synced preview, thumbnails, waveforms, missing-media relink | verified |
 | M2 | Timeline | Tracks, clips, ripple/roll/slip/slide trims, snapping, markers, undo/redo, autosave/recovery | verified (slip/slide deferred) |
 | M3 | Rendering | D3D11/OpenGL compositor, transforms, opacity, transitions, basic color, frame cache (LRU 512 MB) | verified (GPU path → M9) |
-| M4 | Export | Presets, hardware encode with software fallback, batch queue with progress/ETA/cancel | not started |
+| M4 | Export | Presets, hardware encode with software fallback, batch queue with progress/ETA/cancel | verified (MOV/ProRes, WAV → M8) |
 | M5 | Subtitles | SRT/VTT/ASS import-export, multi-language tracks (BCP-47), burn-in, RTL, font fallback, reading-speed checks | not started |
 | M6 | Kilo Gateway | Streaming client (verified against live gateway), subtitle translation, chapters, titles, AI panel, budget, cache | not started |
 | M7 | Smart features | whisper.cpp transcription, edit suggestions from transcript + silence map, NL command bar (`/ai`) | not started |
@@ -56,6 +56,15 @@ Status legend: `not started` / `in progress` / `verified` (build + tests green, 
 ### M4 — Export
 - MP4 (H.264/H.265/AV1), MOV (ProRes where licensed), WebM (VP9/AV1), audio (AAC/Opus/WAV); NVENC/QSV/AMF with x264/x265/SVT fallback; presets with estimated size/time; batch queue table.
 - Exit: batch of 3 presets on a 30 s project completes with correct sizes; fallback verified on iGPU machine or simulated.
+- **Done (MP4 + WebM)**: presets (mp4-h264-high/balanced/web-720, mp4-hevc, mp4-audio, webm-vp9)
+  with live size/time estimates; NVENC/QSV/AMF candidates with x264/x265/SVT-AV1/AOM/VP9
+  software fallback (simulated via injectable encoder list); ExportQueue (worker thread,
+  sequential jobs, per-job progress + cancel); Export dialog (File → Export, Ctrl+Shift+E)
+  with preset checklist, scale 25–200 %, custom-quality CRF slider, audio bitrate, HW
+  toggle, and a batch queue table. Batch of 3 presets exits green; 30 s real-media run
+  covered by the guismoke export section (2 presets through the dialog).
+  All output streams use a 1/1000 time base (Matroska muxer requirement — see DECISIONS D-019).
+  Deferred: MOV/ProRes container, WAV audio export, GPU-encode benchmark on real hardware.
 
 ### M5 — Subtitles
 - SRT/VTT/ASS import/export; multi-track with BCP-47; burn-in + sidecar; RTL mirroring for text; CJK/Arabic/Devanagari font fallback; reading-speed warnings (> 42 chars, > 17 cps inline red underline).

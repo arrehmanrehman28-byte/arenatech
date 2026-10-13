@@ -29,6 +29,7 @@ class Settings;
 class KiloClient;
 class AIBudget;
 class Autosave;
+class ExportDialog;
 class MediaBinWidget;
 class InspectorWidget;
 class SubtitlesWidget;
@@ -49,6 +50,7 @@ public:
     void applyLanguage();          // layout direction + full retranslate
     void applyThemeAndFont();      // live theme/accent/font-scale
     bool testWidgetReady() const { return m_ready; }
+    ExportDialog *exportDialog() const { return m_exportDialog; }
 
     QString projectPath() const { return m_projectPath; }
     Project *project() const { return m_project ? m_project.get() : nullptr; }
@@ -68,6 +70,8 @@ public:
     // headless selftests): import, probe, and place clips.
     void importMedia(const QStringList &paths);
     void addClipToTimeline(const QString &path);
+    // M4: opens (or raises) the export dialog for the current project.
+    void openExportDialog();
     void togglePlayback();
     void seekToFrame(qint64 frame);
     QImage previewImage() const;
@@ -183,6 +187,9 @@ private:
     QComboBox *m_playbackRes = nullptr;
     int m_playbackScale = 1; // 1 (Full), 2 (Half), 4 (Quarter)
     mutable Compositor::FrameCache m_frameCache;
+
+    // M4: single open export dialog (nullptr when closed).
+    ExportDialog *m_exportDialog = nullptr;
 
     // actions
     QAction *m_undoAct = nullptr;

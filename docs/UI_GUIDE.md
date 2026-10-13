@@ -145,6 +145,32 @@ arriving in M2.
 - **Dropped frames** — the status bar counts frames the decoder could
   not show on time during playback (reset on each play).
 
+## Export (M4)
+
+- **Open** — File → Export… (Ctrl+Shift+E). Requires a project; the
+  dialog is disabled (status message) in builds without FFmpeg.
+- **Presets** — checklist of presets (mp4-h264-high, mp4-h264-balanced,
+  mp4-h264-web-720, mp4-hevc, mp4-audio, webm-vp9). Each row shows a
+  live size/time estimate, and the box footer shows the total for the
+  checked set. Estimates are heuristics (resolution × fps × duration ×
+  quality), not a promise.
+- **Options** — Scale (25–200 % of project size), Hardware encode
+  (NVENC/QSV/AMF candidates with automatic software fallback),
+  Custom quality (slider → CRF 1–51; off = the preset's quality), and
+  Audio bitrate (preset / 96–320 kbps).
+- **Output** — folder picker (defaults to the project's folder).
+  Files are named `<project>-<preset>.<ext>`.
+- **Queue** — **Start export** queues every checked preset and runs
+  them sequentially on a background thread (the UI stays fully
+  usable; the timeline stays editable because each job works on a
+  snapshot of the project). The queue table shows per-job status
+  (Queued → Encoding… → Done/Failed/Cancelled), a progress bar, and
+  the final file size. **Cancel** stops the running job at its next
+  frame boundary (partial files are removed). Closing the dialog
+  while a job runs asks for confirmation and cancels.
+- **Sources** — export always decodes the original files at full
+  quality (never the 540 p playback proxies).
+
 ## Interaction rules
 
 - **Keyboard first**: J/K/L shuttle, I/O in/out (M2), Q/W ripple trim,

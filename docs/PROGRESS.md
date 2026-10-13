@@ -3,6 +3,127 @@
 *Verified-phase log (working rule #2). Every entry: build clean (zero
 warnings) → tests → targeted checks → evidence.*
 
+## 2026-10-13 — M4 Export: verified ✅
+
+**Scope delivered**
+
+- **Core pipeline** (`render/ffmpeg_export.cpp`, `Exporter::exportProject`):
+  project frames through the M3 compositor → YUV420P → encoder (CRF
+  quality); audio timeline from clip spans with tail-crossfades and
+  silence padding to the project end, 48 kHz stereo; encoder
+  frame-size aware (1024 AAC / 960 Opus); progress callback + cancel
+  token.
+- **Presets & selection** (`render/exporter.cpp`): mp4-h264-high /
+  balanced / web-720, mp4-hevc, mp4-audio, webm-vp9; video fallback
+  chain (NVENC/QSV/AMF candidates → x264/x265/SVT-AV1/AOM/VP9), audio
+  selection (AAC/Opus); size/time estimates for the UI.
+- **Export queue** (`render/exportqueue.{h,cpp}`): sequential jobs on
+  a worker thread from deep-copied snapshots (D-020); state returns
+  via queued signals; cancel stops the running job at the next frame
+  boundary; no UI freezes (spec).
+- **Export dialog** (`app/exportdialog.{h,cpp}`, File → Export,
+  Ctrl+Shift+E): preset checklist with live per-preset and total
+  size/time estimates, scale 25–200 %, custom-quality slider
+  (CRF 1–51), audio bitrate, hardware-encode toggle, output folder,
+  and a batch queue table (status / progress bar / size per job).
+- **Real media fetchers**: export decodes the *original* file (never
+  the proxy) with a frame-accurate one-shot `VideoDecoder` per call;
+  audio via `AudioReader` with resampling, source fps from the probe.
+
+**Exit criteria (PLAN M4)**
+
+- Batch of 3 presets completes with correct sizes:
+  `Exporter.BatchThreePresets` (mp4-h264-high, mp4-h264-balanced,
+  webm-vp9) — all probe back at 1.0 s ± 0.06; higher quality not
+  smaller.
+- Fallback verified by simulation (injectable available-encoder list,
+  `Exporter.CodecSelectionFallback`); a real iGPU hardware run stays
+  for M9.
+- End-to-end through the real UI: `Guismoke.MediaPipeline` M4 section
+  opens the dialog, queues two presets at 25 % scale, runs the queue
+  to completion, and checks the output files.
+
+**Verification (g++ 14.2, Qt 6.8.2, FFmpeg 7.1)**
+
+- Clean rebuild: **0 errors, 0 warnings**.
+- ctest: **71/71 pass** — new: `QueueApp.RunsTwoJobsInOrderAndSucceeds`,
+  `QueueApp.CancelStopsRunningJob`, `QueueApp.ProgressBoundedAndCompletes`,
+  the 6 core export tests, and the guismoke M4 section (4 checks);
+  all 62 pre-M4 tests still pass.
+- `--selftest`: **PASS**.
+
+**Bugs found & fixed**
+
+- **WebM segment duration 48× too long (the big one)**: the Matroska
+  muxer writes packet pts verbatim into millisecond EBML fields; with
+  sample-based pts a 1 s audio track reported 48.312 s (47040 last
+  audio pts in sample units + 1272 last video pts in ms). Fix: both
+  output streams use a 1/1000 time base and every encoder packet is
+  rescaled from its encoder time base before muxing (D-019).
+  Isolated with a minimal two-variant writer (sample pts → 48.312 s;
+  ms pts → 1.008 s) after source-level confirmation in
+  `libavformat/matroskaenc.c`.
+- AAC NaN frames: `AudioTimeline::nextChunk` tracked the interleaved
+  buffer as per-channel → half the slots unwritten. Rewritten with
+  per-channel positioning, L/R pair filling, and silence-padded tails
+  (final partial frame now encoded; the 21 ms truncation is gone).
+- libopus frame size is 960 samples at 48 kHz (1024 is AAC's) — chunk
+  size now comes from `aenc->frame_size` after `avcodec_open2`.
+- Video pts: encoders normalize `time_base` (VP9 → 1/1000, x264 →
+  1/15360); frame pts must be rescaled into the *encoder's* time
+  base, packet pts into the *stream's* (1/1000). The mp4 video
+  stream silently carried the same bug (metadata duration 3.8 ms,
+  masked by the audio-driven container duration).
+- Leftover TEMP DEBUG scan with a stale buffer size caused OOB "NaN"
+  reads after the chunk-size change — instrumentation always removed
+  with the size change.
+
+**Not done / next**
+
+- MOV/ProRes container, WAV audio export, subtitle burn-in into
+  exports (M5/M8); GPU-encode benchmark on real hardware (M9).
+- M5 Subtitles.
+
+## 2026-10-13 — M3 Rendering: verified ✅
+
+**Scope delivered**
+
+- **Deterministic software compositor** (`render/compositor.cpp`):
+  the single place a timeline frame becomes pixels — track stacking
+  (bottom → top), per-clip effect graph (transform, opacity, color
+  LUTs, box blur, Ken Burns, speed), tail transitions
+  (cross_dissolve, fade_to_black, wipe, push). Deterministic: golden
+  frame tests compare pixels exactly (tolerance 0).
+- **LRU frame cache**: 512 MB default cap (`render/cacheMB`),
+  thread-safe, byte-accounted; feeds the compositor fast path and the
+  monitor; live occupancy in the status bar.
+- **Inspector effects editor**: spinboxes for all effect parameters;
+  Apply → undoable `SetEffectsCommand`; defaults serialize to empty
+  JSON so the fast path (no effects) skips the compositor entirely.
+- **Monitor compositing**: when any clip has effects, the monitor
+  renders through the compositor (engine-decoded frame for the
+  current source, one-shot `VideoDecoder` for cross-file
+  transitions).
+- **Playback resolution** (Full / 1/2 / 1/4, display-only scaling)
+  and a **dropped-frame counter** in the status bar.
+- Preview seeking uses trimmed clips' in points
+  (`in + (playhead − offset)`); fast and compositor paths agree.
+
+**Verification (g++ 14.2, Qt 6.8.2, FFmpeg 7.1.5)**
+
+- Clean rebuild: **0 errors, 0 warnings**.
+- ctest: **62/62 pass** — new: golden-frame tests (pixel-exact,
+  tolerance 0, hash `eea751c5…`), `FrameCache` LRU/eviction tests,
+  and the guismoke M3 section (12 checks: apply → command →
+  brighter frame → undo, 1/2 resolution, dropped label).
+- `--selftest`: **PASS**.
+
+**Not done / next**
+
+- GPU path (D3D11/OpenGL) behind `isGpuAvailable()` — real GPU
+  hardware at M8/M9; sharpen/blend/.cube effects deferred.
+- M4 Export.
+
 ## 2026-10-13 — M2 Timeline editing: verified ✅
 
 **Scope delivered**

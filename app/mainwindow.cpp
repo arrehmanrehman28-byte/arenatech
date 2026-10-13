@@ -10,6 +10,10 @@
 #include "autosave.h"
 #include "util.h"
 #include "kilogateway.h"
+#include "exportdialog.h"
+#include "exportqueue.h"
+#include "exporter.h"
+#include "media.h"
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
@@ -134,9 +138,8 @@ void MainWindow::buildActions()
     exitAct->setShortcut(QKeySequence::Quit);
     connect(exitAct, &QAction::triggered, this, &QWidget::close);
     auto *exportAct = new QAction(this);
-    connect(exportAct, &QAction::triggered, this, [this] {
-        statusBar()->showMessage(arenaTr("export.phaseNote"), 5000);
-    });
+    exportAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+E")));
+    connect(exportAct, &QAction::triggered, this, &MainWindow::openExportDialog);
 
     m_fileMenu = menuBar()->addMenu(arenaTr("menu.file"));
     m_fileMenu->addAction(newAct);
@@ -1636,5 +1639,79 @@ void MainWindow::deleteSelectedClip()
     refreshTimeline();
 }
 
+// --- M4 export ---------------------------------------------------------------
+
+void MainWindow::openExportDialog()
+{
+    if (!m_project) {
+        statusBar()->showMessage(arenaTr("export.noProject"), 3000);
+        return;
+    }
+    if (!Exporter::isAvailable()) {
+        statusBar()->showMessage(arenaTr("export.unavailable"), 5000);
+        return;
+    }
+    if (m_exportDialog) {
+        m_exportDialog->raise();
+        m_exportDialog->activateWindow();
+        return;
+    }
+    // Snapshot everything the worker will read: project data and the
+    // per-source fps table. Decoders are stateless per call, so the lambdas
+    // below are safe on the export worker thread (never the playback engine).
+    const Project snapshot = *m_project;
+    const QHash<QString, double> fpsByPath = [this] {
+        QHash<QString, double> out;
+        for (auto it = m_mediaInfo.cbegin(); it != m_mediaInfo.cend(); ++it)
+            if (it->fps > 0.0)
+                out.insert(it.key(), it->fps);
+        return out;
+    }();
+    const double projectFps = snapshot.fps;
+
+    ExportJobSource src;
+    src.project = snapshot;
+    // Stateless: opens its own decoder per call (export must never touch the
+    // playback engine or live window state).
+    src.fetch = [](const QString &source, qint64 frame) -> QImage {
+        QImage img;
+        VideoDecoder dec;
+        if (dec.open(source)) {
+            QImage tmp;
+            if (dec.frameAtSec(double(frame) / qMax(0.1, dec.fps()), &tmp))
+                img = tmp;
+        }
+        return img;
+    };
+    src.audio = [fpsByPath, projectFps](const QString &source, qint64 inFrame, qint64 outFrame,
+                                         int rate, int channels, QVector<float> *out) {
+        const double fps = fpsByPath.value(source, 0.0);
+        const double srcFps = fps > 0.0 ? fps : projectFps;
+        const double secIn = double(inFrame) / srcFps;
+        const double secOut = double(outFrame) / srcFps;
+        AudioReader reader;
+        if (!reader.open(source))
+            return false;
+        reader.setOutput(rate, channels);
+        if (!reader.seekSec(secIn))
+            return false;
+        const int total = int((secOut - secIn) * rate + 0.5);
+        out->resize(total * channels);
+        int got = 0;
+        while (got < total * channels) {
+            const int n = reader.readInterleaved(out->data() + got, total * channels - got);
+            if (n <= 0)
+                break;
+            got += n;
+        }
+        if (got < total * channels)
+            out->resize(got); // the export timeline silence-pads the rest
+        return got > 0;
+    };
+
+    m_exportDialog = new ExportDialog(src, this);
+    connect(m_exportDialog, &QObject::destroyed, this, [this] { m_exportDialog = nullptr; });
+    m_exportDialog->show();
+}
 
 } // namespace arena
