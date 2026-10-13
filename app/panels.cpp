@@ -531,13 +531,6 @@ void InspectorWidget::clearSelection()
 
 // --- SubtitlesWidget (M5.3: full CRUD + import/export + burn-in) ----------
 namespace {
-// BCP-47 choices for new/imported tracks (the eight supported UI languages
-// + "und" for unknown).
-const QStringList kSubtitleLanguages = {
-    QStringLiteral("en"), QStringLiteral("ur"), QStringLiteral("ar"),
-    QStringLiteral("es"), QStringLiteral("fr"), QStringLiteral("hi"),
-    QStringLiteral("zh"), QStringLiteral("ja"), QStringLiteral("und")};
-
 bool validTimecode(const QString &tc)
 {
     return tc.split(QLatin1Char(':'), Qt::SkipEmptyParts).size() == 4;
@@ -749,7 +742,7 @@ void SubtitlesWidget::addTrackDialog()
     auto *name = new QLineEdit;
     auto *lang = new QComboBox;
     lang->setEditable(true);
-    for (const QString &l : kSubtitleLanguages) lang->addItem(l);
+    for (const QString &l : subtitleLanguages()) lang->addItem(l);
     lang->setCurrentText(QStringLiteral("en"));
     auto *burn = new QCheckBox(arenaTr("dialog.subtitleTrack.burnIn"));
     lay->addRow(arenaTr("dialog.subtitleTrack.name"), name);
@@ -792,7 +785,7 @@ void SubtitlesWidget::importTrack()
     bool ok = false;
     const QString lang = QInputDialog::getItem(
         this, arenaTr("dialog.subtitleTrack.language"),
-        arenaTr("dialog.subtitleTrack.language"), kSubtitleLanguages, 0, true, &ok);
+        arenaTr("dialog.subtitleTrack.language"), subtitleLanguages(), 0, true, &ok);
     if (!ok) return;
     SubtitleTrack st;
     st.id = QUuid::createUuid().toString(QUuid::WithoutBraces);

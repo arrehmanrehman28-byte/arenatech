@@ -8,6 +8,7 @@
 #include <QTableWidget>
 #include <QTreeWidget>
 #include <QVector>
+#include <QStringList>
 #include <QComboBox>
 #include <QCheckBox>
 #include <QDoubleSpinBox>
@@ -19,6 +20,15 @@
 #include "project.h"
 
 namespace arena {
+
+// BCP-47 choices for subtitle tracks (the eight supported UI languages plus
+// "und"). Shared by the Subtitles widget and the AI panel (M6.2).
+inline QStringList subtitleLanguages()
+{
+    return {QStringLiteral("en"), QStringLiteral("ur"), QStringLiteral("ar"),
+            QStringLiteral("es"), QStringLiteral("fr"), QStringLiteral("hi"),
+            QStringLiteral("zh"), QStringLiteral("ja"), QStringLiteral("und")};
+}
 
 // Draws safe-area / grid / thirds overlays on a letterboxed preview surface,
 // with the decoded video frame letterboxed to the project aspect ratio.

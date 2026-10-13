@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QToolButton>
 
+#include "aifeatures.h"
 #include "command.h"
 #include "commandpalette.h"
 #include "compositor.h"
@@ -73,6 +74,19 @@ public:
     void addClipToTimeline(const QString &path);
     // M4: opens (or raises) the export dialog for the current project.
     void openExportDialog();
+
+    // M6.2: AI feature application. Every method is an explicit user
+    // confirmation from the AI panel (accept button); each produces one or
+    // more undoable commands. Text-only inputs; media never leaves.
+    void applyAiTranslation(const QString &sourceTrackId, const QString &targetLang,
+                            const QStringList &translatedTexts);
+    void applyAiChapters(const QVector<ChapterSuggestion> &chapters);
+    void applyAiTitle(const TitleResult &t);
+    void applyAiCuts(const QVector<CutSuggestion> &cuts);
+    // Ripple-remove [startFrame, endFrame) on the primary video track
+    // (one undoable command). Public so the AI accept path and the headless
+    // smoke test share the exact same code path.
+    void applyCutRange(qint64 startFrame, qint64 endFrame);
     void togglePlayback();
     void seekToFrame(qint64 frame);
     // M3: re-render the monitor frame at the current playhead (synchronous;
@@ -105,6 +119,9 @@ private:
     void tickSecond();
     void showWelcomeIfNeeded();
     void registerCommands();
+    // Index of the first video track (-1 when none); used by the M6.2
+    // cut-apply path.
+    int primaryVideoTrackIndex() const;
 
     // --- M1 media pipeline ---------------------------------------------------
     // Probes each imported file on a background thread.

@@ -14,6 +14,7 @@
 #include "exportqueue.h"
 #include "exporter.h"
 #include "media.h"
+#include "subtitles.h"
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
@@ -369,6 +370,13 @@ void MainWindow::buildDocks()
     addDockWidget(Qt::RightDockWidgetArea, aiDock);
     tabifyDockWidget(inspectorDock, aiDock);
     connect(m_aiPanel, &AiPanel::enableRequested, this, [this] { enableAiWithNotice(); });
+    // M6.2: accept signals carry validated payloads; the panel never mutates
+    // the project itself.
+    connect(m_aiPanel, &AiPanel::translationAccepted, this,
+            &MainWindow::applyAiTranslation);
+    connect(m_aiPanel, &AiPanel::chaptersAccepted, this, &MainWindow::applyAiChapters);
+    connect(m_aiPanel, &AiPanel::titleAccepted, this, &MainWindow::applyAiTitle);
+    connect(m_aiPanel, &AiPanel::cutsAccepted, this, &MainWindow::applyAiCuts);
 
     m_subtitles = new SubtitlesWidget;
     auto *subDock = new QDockWidget;
@@ -674,10 +682,12 @@ void MainWindow::refreshProjectViews()
         m_monitor->setAspect(m_project->width, m_project->height);
         m_fps->setText(arenaTr("status.fps", {{QStringLiteral("fps"), QString::number(m_project->fps, 'g', 3)}}));
         m_inspector->setProjectName(m_project->name, m_project->fps, m_project->width, m_project->height);
+        m_aiPanel->setProject(m_project.get()); // M6.2: task availability
     } else {
         m_timeline->setProject(false, 30);
         m_inspector->clearSelection();
         m_fps->setText(arenaTr("status.fps", {{QStringLiteral("fps"), QStringLiteral("30")}}));
+        m_aiPanel->setProject(nullptr);
     }
     m_timecode->setText(framesToTimecode(m_playhead, m_project ? m_project->fps : 30));
     retranslateUi();
@@ -982,6 +992,130 @@ struct SetEffectsCommand : public Command {
     {
         return 128 + int(to.size()) + int(from.size());
     }
+};
+
+// Add a whole subtitle track (AI translation accept; undoable).
+struct AddSubtitleTrackCommand : public Command {
+    Project *project = nullptr;
+    SubtitleTrack track;
+    AddSubtitleTrackCommand(Project *p, SubtitleTrack t)
+        : project(p), track(std::move(t)) {}
+    void execute() override { project->subtitleTracks.append(track); }
+    void undo() override
+    {
+        for (int i = project->subtitleTracks.size() - 1; i >= 0; --i)
+            if (project->subtitleTracks[i].id == track.id) {
+                project->subtitleTracks.removeAt(i);
+                return;
+            }
+    }
+    QString actionName() const override { return arenaTr("subtitles.trackAdded"); }
+    int retainedBytes() const override { return 512 + track.cues.size() * 96; }
+};
+
+// Add several labeled markers at once (AI chapters accept; undoable).
+struct AddMarkersCommand : public Command {
+    Project *project = nullptr;
+    QList<Marker> markers;
+    AddMarkersCommand(Project *p, QList<Marker> m)
+        : project(p), markers(std::move(m)) {}
+    void execute() override
+    {
+        for (const Marker &m : markers) project->markers.append(m);
+    }
+    void undo() override
+    {
+        // Remove newest first, matching (time, label) from the back, so a
+        // user marker added later at the same time is never touched.
+        for (int i = markers.size() - 1; i >= 0; --i) {
+            const Marker m = markers[i];
+            for (int j = project->markers.size() - 1; j >= 0; --j) {
+                if (project->markers[j].time == m.time &&
+                    project->markers[j].label == m.label) {
+                    project->markers.removeAt(j);
+                    break;
+                }
+            }
+        }
+    }
+    QString actionName() const override { return arenaTr("timeline.chaptersAdded"); }
+    int retainedBytes() const override { return 64 * (1 + markers.size()); }
+};
+
+// Ripple-remove [s, e) from the primary video track (AI cuts accept; one
+// undoable command). Clips fully inside the range are deleted; clips
+// overlapping an edge are trimmed in place; a clip strictly containing the
+// range is split (the tail becomes a new clip starting at s); every clip
+// after the range shifts left by the removed length. Audio/other tracks are
+// untouched (documented in DECISIONS.md).
+struct RippleRemoveRangeCommand : public Command {
+    Project *project = nullptr;
+    int trackIndex = -1;
+    qint64 s = 0;
+    qint64 e = 0;
+    QList<Clip> saved; // full snapshot of the track before the cut
+    bool hasSaved = false;
+
+    RippleRemoveRangeCommand(Project *p, int ti, qint64 start, qint64 end)
+        : project(p), trackIndex(ti), s(start), e(end) {}
+
+    void execute() override
+    {
+        if (!project || trackIndex < 0 || trackIndex >= project->tracks.size())
+            return;
+        Track &tr = project->tracks[trackIndex];
+        if (!hasSaved) {
+            saved = tr.clips;
+            hasSaved = true;
+        }
+        tr.clips = cutRange(saved, s, e);
+    }
+
+    void undo() override
+    {
+        if (!project || !hasSaved || trackIndex < 0 ||
+            trackIndex >= project->tracks.size())
+            return;
+        project->tracks[trackIndex].clips = saved;
+    }
+
+    static QList<Clip> cutRange(const QList<Clip> &in, qint64 s, qint64 e)
+    {
+        QList<Clip> out;
+        const qint64 len = e - s;
+        if (len <= 0) return in;
+        for (const Clip &c : in) {
+            const qint64 a = c.offset;
+            const qint64 b = a + c.duration();
+            const qint64 removedBefore = qBound<qint64>(0, a - s, len);
+            if (b <= s || a >= e) {
+                Clip n = c;
+                n.offset = a - removedBefore;
+                out.append(n);
+                continue;
+            }
+            // Overlap with [s, e): keep the pre-cut part [a, s) in place and
+            // the post-cut part [e, b) adjacent at s. A clip fully inside
+            // the range yields no parts and is deleted.
+            if (a < s) {
+                Clip n = c;
+                n.out = c.in + (s - a);
+                out.append(n);
+            }
+            if (b > e) {
+                Clip n = c;
+                if (a >= s) n.id = c.id; // no head part: keep identity
+                else n.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                n.in = c.in + (e - a);
+                n.offset = s;
+                out.append(n);
+            }
+        }
+        return out;
+    }
+
+    QString actionName() const override { return arenaTr("timeline.rangeCut"); }
+    int retainedBytes() const override { return 256 * (1 + saved.size()); }
 };
 
 // Remove one clip from a track (undoable; re-inserts at the same position).
@@ -1635,6 +1769,103 @@ void MainWindow::deleteSelectedClip()
         updateTransportButtons();
     }
     refreshTimeline();
+}
+
+// --- M6.2 AI feature application (accept paths from the AI panel) -----------
+
+int MainWindow::primaryVideoTrackIndex() const
+{
+    if (!m_project) return -1;
+    for (int i = 0; i < m_project->tracks.size(); ++i)
+        if (m_project->tracks[i].type == TrackType::Video) return i;
+    return -1;
+}
+
+void MainWindow::applyCutRange(qint64 startFrame, qint64 endFrame)
+{
+    if (!m_project || endFrame <= startFrame) return;
+    const int ti = primaryVideoTrackIndex();
+    if (ti < 0) {
+        statusBar()->showMessage(arenaTr("panel.ai.noVideoTrack"), 4000);
+        return;
+    }
+    commitCommand(std::make_unique<RippleRemoveRangeCommand>(
+        m_project.get(), ti, startFrame, endFrame));
+}
+
+void MainWindow::applyAiTranslation(const QString &sourceTrackId,
+                                    const QString &targetLang,
+                                    const QStringList &translatedTexts)
+{
+    if (!m_project) return;
+    const SubtitleTrack *src = nullptr;
+    for (const SubtitleTrack &t : m_project->subtitleTracks)
+        if (t.id == sourceTrackId) { src = &t; break; }
+    if (!src || translatedTexts.size() != src->cues.size()) {
+        statusBar()->showMessage(arenaTr("panel.ai.translationStale"), 4000);
+        return;
+    }
+    SubtitleTrack st;
+    st.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    st.language = targetLang;
+    st.name = targetLang;
+    st.burnIn = false;
+    for (int i = 0; i < src->cues.size(); ++i) {
+        TimelineCue c = src->cues[i]; // identical frame timings
+        c.text = translatedTexts.at(i);
+        st.cues.append(c);
+    }
+    commitCommand(std::make_unique<AddSubtitleTrackCommand>(m_project.get(), st));
+    m_subtitles->setProject(m_project.get());
+    statusBar()->showMessage(
+        arenaTr("panel.ai.apply.translation",
+                {{QStringLiteral("count"), QString::number(st.cues.size())},
+                 {QStringLiteral("lang"), targetLang}}),
+        5000);
+}
+
+void MainWindow::applyAiChapters(const QVector<ChapterSuggestion> &chapters)
+{
+    if (!m_project || chapters.isEmpty()) return;
+    QList<Marker> ms;
+    for (const ChapterSuggestion &ch : chapters) {
+        Marker m;
+        m.time = Subtitles::secToFrame(ch.startSec, m_project->fps);
+        m.label = ch.title;
+        ms.append(m);
+    }
+    commitCommand(std::make_unique<AddMarkersCommand>(m_project.get(), ms));
+    statusBar()->showMessage(
+        arenaTr("panel.ai.apply.chapters",
+                {{QStringLiteral("count"), QString::number(ms.size())}}),
+        5000);
+}
+
+void MainWindow::applyAiTitle(const TitleResult &t)
+{
+    if (!m_project || t.title.trimmed().isEmpty()) return;
+    commitCommand(makeRenameProjectCommand(m_project.get(), t.title.trimmed()));
+    statusBar()->showMessage(arenaTr("panel.ai.apply.title"), 5000);
+}
+
+void MainWindow::applyAiCuts(const QVector<CutSuggestion> &cuts)
+{
+    if (!m_project || cuts.isEmpty()) return;
+    const double fps = m_project->fps;
+    // Apply in reverse so the earlier timecodes stay valid after the
+    // timeline shortens; each cut is its own undoable command.
+    int applied = 0;
+    for (int i = cuts.size() - 1; i >= 0; --i) {
+        const CutSuggestion c = cuts[i];
+        const qint64 s = static_cast<qint64>(qRound(c.startSec * fps));
+        const qint64 e = static_cast<qint64>(qRound(c.endSec * fps));
+        if (e - s < 1) continue; // sub-frame suggestion
+        applyCutRange(s, e);
+        ++applied;
+    }
+    statusBar()->showMessage(
+        arenaTr("panel.ai.apply.cuts", {{QStringLiteral("count"), QString::number(applied)}}),
+        5000);
 }
 
 // --- M4 export ---------------------------------------------------------------

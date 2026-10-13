@@ -479,6 +479,122 @@ int main(int argc, char **argv)
         spin(50);
     }
 
+    // --- M6.2: AI application paths (accept -> undoable command) --------------
+    // The accept paths are the same public methods the AI panel emits into;
+    // they take validated, text-only payloads and never touch the network.
+    if (w.project()) {
+        Track *v1 = nullptr;
+        for (Track &t : w.project()->tracks)
+            if (t.type == TrackType::Video) { v1 = &t; break; }
+        check(v1 && v1->clips.size() == 1, "M6.2: one clip on V1");
+        if (v1 && v1->clips.size() == 1) {
+            const Clip c0 = v1->clips[0]; // snapshot
+
+            // 1) Middle cut inside the single clip: split + tail at cut start.
+            const qint64 cs = c0.offset + 10;
+            const qint64 ce = c0.offset + 20;
+            w.applyCutRange(cs, ce);
+            spin(20);
+            check(v1->clips.size() == 2, "M6.2: middle cut splits clip");
+            if (v1->clips.size() == 2) {
+                check(v1->clips[0].id == c0.id && v1->clips[0].out == c0.in + 10,
+                      "M6.2: head keeps identity, trimmed to cut start");
+                check(v1->clips[1].offset == cs && v1->clips[1].in == c0.in + 20 &&
+                          v1->clips[1].out == c0.out,
+                      "M6.2: tail starts at cut start with matching source");
+            }
+            w.undo();
+            spin(20);
+            check(v1->clips.size() == 1 && v1->clips[0].id == c0.id &&
+                      v1->clips[0].in == c0.in && v1->clips[0].out == c0.out,
+                  "M6.2: undo restores the original clip");
+
+            // 2) Full-range cut: deletes the clip; undo restores it.
+            w.applyCutRange(c0.offset, c0.offset + c0.duration());
+            spin(20);
+            check(v1->clips.isEmpty(), "M6.2: full-range cut deletes clip");
+            w.undo();
+            spin(20);
+            check(v1->clips.size() == 1 && v1->clips[0].in == c0.in &&
+                      v1->clips[0].out == c0.out,
+                  "M6.2: undo restores deleted clip");
+
+            // 3) Translation accept: new track, same frame timings, original
+            //    untouched; undo removes the new track.
+            SubtitleTrack src2;
+            src2.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            src2.name = QStringLiteral("src");
+            src2.language = QStringLiteral("en");
+            TimelineCue q1;
+            q1.startFrame = 0;
+            q1.endFrame = 30;
+            q1.text = QStringLiteral("Hello world");
+            TimelineCue q2;
+            q2.startFrame = 30;
+            q2.endFrame = 60;
+            q2.text = QStringLiteral("Second line");
+            src2.cues = {q1, q2};
+            w.project()->subtitleTracks.append(src2);
+            w.applyAiTranslation(src2.id, QStringLiteral("ur"),
+                                 {QStringLiteral("Hello world UR"),
+                                  QStringLiteral("Second line UR")});
+            spin(20);
+            check(w.project()->subtitleTracks.size() == 2,
+                  "M6.2: translation adds a new track");
+            if (w.project()->subtitleTracks.size() == 2) {
+                const SubtitleTrack &nt = w.project()->subtitleTracks.last();
+                check(nt.language == "ur" && nt.cues.size() == 2,
+                      "M6.2: new track has target language + cue count");
+                check(nt.cues[0].startFrame == 0 && nt.cues[0].endFrame == 30 &&
+                          nt.cues[1].startFrame == 30 && nt.cues[1].endFrame == 60,
+                      "M6.2: translation keeps source frame timings");
+                check(w.project()->subtitleTracks.first().cues[0].text ==
+                          "Hello world",
+                      "M6.2: original track untouched");
+            }
+            w.undo();
+            spin(20);
+            check(w.project()->subtitleTracks.size() == 1,
+                  "M6.2: undo removes the translation track");
+
+            // 4) Chapters accept: labeled markers; undo removes them.
+            QVector<ChapterSuggestion> ch;
+            ch.append({1.0, QStringLiteral("Intro")});
+            ch.append({2.0, QStringLiteral("Middle")});
+            ch.append({3.0, QStringLiteral("End")});
+            w.applyAiChapters(ch);
+            spin(20);
+            check(w.project()->markers.size() == 3, "M6.2: chapters add 3 markers");
+            if (w.project()->markers.size() == 3)
+                check(w.project()->markers[1].label == "Middle",
+                      "M6.2: chapter marker keeps its title");
+            w.undo();
+            spin(20);
+            check(w.project()->markers.isEmpty(), "M6.2: undo removes chapter markers");
+
+            // 5) Title accept: renames the project; undo reverts.
+            const QString oldName = w.project()->name;
+            TitleResult tr;
+            tr.title = QStringLiteral("AI Smoke Title");
+            tr.description = QStringLiteral("smoke");
+            w.applyAiTitle(tr);
+            spin(20);
+            check(w.project()->name == "AI Smoke Title",
+                  "M6.2: suggested title renames project");
+            w.undo();
+            spin(20);
+            check(w.project()->name == oldName, "M6.2: undo reverts the name");
+        }
+        // Cleanup: no AI artifacts left behind.
+        w.project()->subtitleTracks.clear();
+        w.subtitles()->setProject(w.project());
+        spin(50);
+    }
+
+    // Give background workers (export worker thread, proxy encoder) a moment
+    // to wind down before the window tears down.
+    spin(500);
+
     if (g_failures == 0) {
         printf("GUISOKE PASS\n");
         return 0;

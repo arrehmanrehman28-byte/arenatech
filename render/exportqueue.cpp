@@ -60,7 +60,10 @@ ExportQueue::~ExportQueue()
     cancelCurrent();
     if (m_worker) {
         m_worker->wait(10000); // cancelled worker exits after the current frame
-        m_worker->deleteLater();
+        // A QThread object may only be deleted after its thread has fully
+        // exited; deleting a still-running QThread is a hard error.
+        if (!m_worker->isRunning())
+            m_worker->deleteLater();
         m_worker = nullptr;
     }
 }
@@ -157,7 +160,6 @@ void ExportQueue::start()
             Qt::QueuedConnection);
     connect(worker, &ExportWorker::allDone, this, &ExportQueue::onWorkerDone,
             Qt::QueuedConnection);
-    connect(m_worker, &QThread::finished, m_worker, &QObject::deleteLater);
     m_worker->start();
 }
 
@@ -200,6 +202,10 @@ void ExportQueue::onWorkerFinished(int index, bool ok, const QString &error)
 void ExportQueue::onWorkerDone()
 {
     if (m_worker) {
+        // allDone is the last signal run() emits; the worker thread is still
+        // unwinding when this queued handler runs. Wait for full exit before
+        // deleting — destroying a still-running QThread is a hard error.
+        m_worker->wait();
         m_worker->deleteLater();
         m_worker = nullptr;
     }
