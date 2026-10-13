@@ -10,6 +10,7 @@ add_executable(arena_tests
     test_actions.cpp
     test_themer.cpp
     test_media.cpp
+    test_ai.cpp
 )
 target_link_libraries(arena_tests
     PRIVATE arena_core arena_i18n arena_media arena_render arena_stt

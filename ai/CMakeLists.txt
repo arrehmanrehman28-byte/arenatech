@@ -2,6 +2,7 @@
 add_library(arena_ai STATIC
     kilogateway.cpp
     actionvalidator.cpp
+    aifeatures.cpp
     keystore.cpp
 )
 target_include_directories(arena_ai PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
