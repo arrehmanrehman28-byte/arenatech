@@ -1,10 +1,12 @@
 #include "timeline.h"
 #include "i18n.h"
 #include "util.h"
+#include <cmath>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QPainter>
 #include <QWheelEvent>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QLabel>
 
@@ -34,6 +36,57 @@ void TimelineCanvas::setTracks(const QStringList &ids, const QStringList &names)
     update();
 }
 void TimelineCanvas::setHasProject(bool has) { m_hasProject = has; update(); }
+
+void TimelineCanvas::setClips(const QList<ClipView> &clips)
+{
+    m_clips = clips;
+    update();
+}
+
+void TimelineCanvas::setPlayhead(qint64 frame)
+{
+    m_playhead = frame;
+    update();
+}
+
+qint64 TimelineCanvas::frameAtX(double x) const
+{
+    const int headerW = 56;
+    if (x < headerW) return 0;
+    return qMax<qint64>(0, qint64(std::lround((x - headerW) * framesPerPx())));
+}
+
+void TimelineCanvas::mousePressEvent(QMouseEvent *e)
+{
+    if (!m_hasProject) {
+        QWidget::mousePressEvent(e);
+        return;
+    }
+    if (e->button() == Qt::LeftButton && e->position().x() > 56) {
+        m_scrubbing = true;
+        // Clip in the video track under the cursor gets the selection.
+        const qint64 f = frameAtX(e->position().x());
+        for (const ClipView &c : m_clips)
+            if (f >= c.offsetFrames && f < c.offsetFrames + c.durationFrames) {
+                emit clipClicked(c.offsetFrames);
+                break;
+            }
+        emit seekRequested(f);
+        e->accept();
+        return;
+    }
+    QWidget::mousePressEvent(e);
+}
+
+void TimelineCanvas::mouseMoveEvent(QMouseEvent *e)
+{
+    if (m_scrubbing && (e->buttons() & Qt::LeftButton)) {
+        emit seekRequested(frameAtX(e->position().x()));
+        e->accept();
+        return;
+    }
+    QWidget::mouseMoveEvent(e);
+}
 
 void TimelineCanvas::wheelEvent(QWheelEvent *e)
 {
@@ -94,6 +147,54 @@ void TimelineCanvas::paintEvent(QPaintEvent *)
         p.drawText(QRect(2, y, headerW - 4, laneH), Qt::AlignRight | Qt::AlignVCenter,
                    m_trackNames.value(i, m_trackIds.at(i)));
         p.fillRect(headerW, y, width() - headerW, laneH - 1, palette().base().color());
+    }
+
+    // Clips (video track) — waveform texture, selection, missing-media badge.
+    if (!m_clips.isEmpty() && !m_trackIds.isEmpty()) {
+        const int laneY = rulerH;
+        for (const ClipView &c : m_clips) {
+            const double x0 = headerW + double(c.offsetFrames) / fpp;
+            const double w = double(c.durationFrames) / fpp;
+            if (x0 + w < headerW || x0 > width()) continue;
+            const QRectF r(x0 + 1, laneY + 2, qMax(6.0, w - 2), laneH - 5);
+            const QColor base = palette().highlight().color();
+            QColor fill = base;
+            fill.setAlpha(c.selected ? 96 : 56);
+            p.setPen(c.missing ? QPen(QColor(0xE5, 0x53, 0x4B), 2)
+                               : QPen(base.lighter(140), 1));
+            p.setBrush(fill);
+            p.drawRoundedRect(r, 4, 4);
+            if (!c.waveform.isEmpty() && r.width() > 16) {
+                p.setPen(QPen(QColor(255, 255, 255, 96), 1));
+                const double midY = r.center().y();
+                const double maxH = r.height() * 0.38;
+                const double step = r.width() / double(c.waveform.size());
+                for (int i = 0; i < c.waveform.size(); i += 2) {
+                    const double x = r.left() + i * step;
+                    const double a = qMax(2.0, qAbs(double(c.waveform[i].hi)) * maxH);
+                    p.drawLine(QPointF(x, midY - a), QPointF(x, midY + a * 0.6));
+                }
+            }
+            if (c.missing) {
+                p.setPen(QColor(0xE5, 0x53, 0x4B));
+                p.drawText(r.adjusted(6, 2, -6, -2), Qt::AlignLeft | Qt::AlignVCenter,
+                           QStringLiteral("⚠ "));
+            }
+        }
+    }
+
+    // Playhead.
+    {
+        const double x = headerW + double(m_playhead) / fpp;
+        if (x < width()) {
+            p.setPen(QPen(palette().highlight().color(), 1.4));
+            p.drawLine(QPointF(x, rulerH), QPointF(x, height()));
+            p.setBrush(palette().highlight().color());
+            p.setPen(Qt::NoPen);
+            QPolygonF tri;
+            tri << QPointF(x - 5, 0) << QPointF(x + 5, 0) << QPointF(x, 8);
+            p.drawPolygon(tri);
+        }
     }
 }
 

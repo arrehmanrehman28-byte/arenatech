@@ -9,6 +9,8 @@
 #include "command.h"
 #include "autosave.h"
 #include "actionvalidator.h"
+#include "playback.h"
+#include "media.h"
 #include <QApplication>
 #include <QGuiApplication>
 #include <QDir>
@@ -108,7 +110,34 @@ int main(int argc, char **argv)
         check(themer.hasTheme(QStringLiteral("dark")) && themer.hasTheme(QStringLiteral("light"))
                   && themer.hasTheme(QStringLiteral("high-contrast")),
               QStringLiteral("three themes present"));
-        // 3. project round-trip.
+        // 3. Media layer (FFmpeg): availability, probe, waveform, thumbnails, clock math.
+        check(WaveformGenerator::isAvailable() && Thumbnailer::isAvailable() &&
+                  ProxyGenerator::isAvailable(),
+              QStringLiteral("FFmpeg media layer available"));
+        check(PlaybackEngine::targetFrame(1.0, 30.0) == 30 &&
+                  PlaybackEngine::targetFrame(0.49, 30.0) == 15 &&
+                  qAbs(PlaybackEngine::secondsFromProcessed(48000, 48000) - 1.0) < 1e-9,
+              QStringLiteral("playback clock math"));
+        {
+            const QByteArray env = qgetenv("ARENA_SELFTEST_MEDIA");
+            if (!env.isEmpty()) {
+                const QString mp4 = QString::fromLocal8Bit(env);
+                MediaInfo info;
+                QString merr;
+                check(MediaProbe::probeFull(mp4, &info, &merr) && info.hasVideo,
+                      QStringLiteral("probe video (%1)").arg(merr));
+                QVector<Peak> peaks;
+                check(WaveformGenerator::generate(mp4, 16, &peaks, &merr) && peaks.size() == 16,
+                      QStringLiteral("waveform 16 buckets (%1)").arg(merr));
+                QList<QImage> thumbs;
+                check(Thumbnailer::generate(mp4, 3, 32, &thumbs, &merr) && thumbs.size() == 3 &&
+                          !thumbs.first().isNull(),
+                      QStringLiteral("thumbnails x3 (%1)").arg(merr));
+            } else {
+                printf("[SKIP] media probe (no ARENA_SELFTEST_MEDIA fixture)\n");
+            }
+        }
+        // 4. project round-trip.
         QTemporaryDir tmp;
         auto project = std::make_unique<Project>();
         project->id = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -131,7 +160,7 @@ int main(int argc, char **argv)
         check(loaded.tracks.size() == 1 && loaded.tracks[0].clips.size() == 1
                   && loaded.tracks[0].clips[0].duration() == 900,
               QStringLiteral("project round-trip"));
-        // 4. undo/redo command.
+        // 5. undo/redo command.
         UndoStack stack;
         stack.push(makeRenameProjectCommand(project.get(), QStringLiteral("Renamed")));
         check(project->name == QStringLiteral("Renamed"), QStringLiteral("command executes"));
@@ -139,7 +168,7 @@ int main(int argc, char **argv)
         check(project->name != QStringLiteral("Renamed"), QStringLiteral("command undoes"));
         stack.redo();
         check(project->name == QStringLiteral("Renamed"), QStringLiteral("command redoes"));
-        // 5. AI action validator.
+        // 6. AI action validator.
         const QJsonArray good = QJsonDocument::fromJson(
             R"([{"op":"add_transition","target":{"type":"clip","index":-1},"transition":"fade_to_black"}])")
             .array();
@@ -147,9 +176,9 @@ int main(int argc, char **argv)
         const QJsonArray bad =
             QJsonDocument::fromJson(R"([{"op":"fly_to_moon"}])").array();
         check(!actionValidator::validateActions(bad).ok, QStringLiteral("validator rejects unknown op"));
-        // 6. window + palette exist.
+        // 7. window + palette exist.
         check(w.testWidgetReady(), QStringLiteral("main window constructed"));
-        // 7. RTL layout direction applies.
+        // 8. RTL layout direction applies.
         w.applyLanguage();
         I18n::instance().setLocale(QStringLiteral("ur"));
         w.applyLanguage();

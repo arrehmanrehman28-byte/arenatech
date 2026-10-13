@@ -9,6 +9,7 @@
 
 #include "command.h"
 #include "commandpalette.h"
+#include "media.h"
 #include "project.h"
 
 class QAction;
@@ -32,6 +33,9 @@ class SubtitlesWidget;
 class AiPanel;
 class TimelineWidget;
 class PreviewSurface;
+class WaveformStrip;
+class ThumbnailStrip;
+class PlaybackEngine;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -54,6 +58,19 @@ public:
     void closeProject();
     QString currentTitle() const;
 
+    // Programmatic media pipeline (used by the UI, the command palette, and
+    // headless selftests): import, probe, and place clips.
+    void importMedia(const QStringList &paths);
+    void addClipToTimeline(const QString &path);
+    void togglePlayback();
+    void seekToFrame(qint64 frame);
+    QImage previewImage() const;
+    // Probe result for an imported file (default-constructed until probed).
+    MediaInfo mediaInfo(const QString &path) const;
+
+protected:
+    void keyPressEvent(QKeyEvent *) override;
+
 private:
     void buildActions();
     void buildCentral();
@@ -70,10 +87,29 @@ private:
     void showWelcomeIfNeeded();
     void registerCommands();
 
+    // --- M1 media pipeline ---------------------------------------------------
+    // Probes each imported file on a background thread.
+    void probeMedia(const QString &path);
+    void onMediaProbed(const QString &path, const MediaInfo &info);
+    void maybeStartProxy(const QString &path, const MediaInfo &info);
+    void onProxyReady(const QString &source, const QString &proxy, const QString &err);
+    // The path the engine should use for `path` (proxy when available).
+    QString playablePathFor(const QString &path) const;
+    void selectClipAt(const QString &source, qint64 timelineFrame);
+    void refreshTimeline();
+    void generateWaveformThumbs(const QString &path);
+    void onEngineFrame(const QImage &img, int frame);
+    void onEnginePosition(double sec);
+    void onEngineEnded();
+    void onPlayStateChanged(bool playing);
+    void relinkMedia(const QString &oldPath);
+    void updateTransportButtons();
+
     Themer *m_themer;
     Settings *m_settings;
     KiloClient *m_kilo;
     Autosave *m_autosave;
+    PlaybackEngine *m_engine = nullptr;
 
     std::unique_ptr<Project> m_project;
     QString m_projectPath;
@@ -84,6 +120,14 @@ private:
     int m_transportSpeed = 0;
     QTimer m_transportTimer;
     QString m_monitorNote;
+
+    // M1 state.
+    QHash<QString, MediaInfo> m_mediaInfo;  // per imported media
+    QHash<QString, QString> m_proxies;      // source -> proxy path
+    QHash<QString, QVector<Peak>> m_wavePeaks; // source -> waveform (for clips)
+    QString m_currentSource;                // clip shown in the monitor
+    QString m_engineSource;                 // path the engine is open on
+    QToolButton *m_playBtn = nullptr;
 
     QMenu *m_fileMenu = nullptr;
     QMenu *m_editMenu = nullptr;
@@ -110,6 +154,8 @@ private:
     AiPanel *m_aiPanel = nullptr;
     TimelineWidget *m_timeline = nullptr;
     PreviewSurface *m_monitor = nullptr;
+    WaveformStrip *m_waveform = nullptr;
+    ThumbnailStrip *m_thumbs = nullptr;
     QComboBox *m_playbackRes = nullptr;
 
     // actions

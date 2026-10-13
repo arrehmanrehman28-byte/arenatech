@@ -10,7 +10,6 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 option(ARENA_BUILD_TESTS "Build unit tests" ON)
-option(ARENA_ENABLE_FFMPEG "Link real FFmpeg (media phase)" OFF)
 option(ARENA_ENABLE_WHISPER "Link whisper.cpp (STT phase)" OFF)
 option(ARENA_UPX "Compress final binary with UPX (off by default)" OFF)
 
@@ -22,6 +21,37 @@ else()
 endif()
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Network Concurrent)
+# Audio output for M1 playback (WASAPI on Windows, ALSA on Linux).
+find_package(Qt6 6.5 QUIET COMPONENTS Multimedia)
+
+# FFmpeg (LGPL components only: avformat/avcodec/avutil/swscale/swresample).
+# -DARENA_ENABLE_FFMPEG=OFF/ON is honored; otherwise auto-detected via
+# pkg-config (Linux/CI) or imported targets from the package manager (Windows).
+if(NOT DEFINED ARENA_ENABLE_FFMPEG)
+    set(ARENA_ENABLE_FFMPEG OFF)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(AV QUIET IMPORTED_TARGET libavformat libavcodec libavutil
+                          libswscale libswresample)
+    endif()
+    if(AV_FOUND)
+        set(ARENA_ENABLE_FFMPEG ON)
+        message(STATUS "Arena Edit: FFmpeg ${AV_VERSION} auto-detected - media pipeline enabled")
+    else()
+        message(STATUS "Arena Edit: FFmpeg not found - building media stubs (M1 features disabled)")
+    endif()
+    set(ARENA_ENABLE_FFMPEG ${ARENA_ENABLE_FFMPEG} CACHE BOOL
+        "Link real FFmpeg (media pipeline)" FORCE)
+else()
+    if(ARENA_ENABLE_FFMPEG)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(AV REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil
+                          libswscale libswresample)
+        message(STATUS "Arena Edit: FFmpeg ${AV_VERSION} (explicitly enabled)")
+    else()
+        message(STATUS "Arena Edit: FFmpeg explicitly disabled - building media stubs")
+    endif()
+endif()
 
 set(ARENA_VERSION "${PROJECT_VERSION}")
 set(ARENA_BUILD_DATE "${ARENA_BUILD_DATE}" CACHE STRING "Build date stamp")

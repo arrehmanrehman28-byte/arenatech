@@ -3,6 +3,69 @@
 *Verified-phase log (working rule #2). Every entry: build clean (zero
 warnings) → tests → targeted checks → evidence.*
 
+## 2026-10-13 — M1 Media: verified ✅
+
+**Scope delivered**
+
+- `media/` (FFmpeg 7.1, LGPL, dynamic): `MediaProbe` (format probe:
+  resolution, fps, duration, codecs, sample rate/channels), `VideoDecoder`
+  (seek + frame decode → QImage, 4-packet h264 look-ahead), `AudioReader`
+  (decode + resample to 48 kHz interleaved float), `WaveformGenerator`
+  (min/max peaks per time slice), `Thumbnailer` (evenly spaced frames),
+  `ProxyGenerator` (mp4/mpeg4+aac transcode scaled to project proxy height,
+  progress callback, per-user cache dir, deterministic name from
+  source path + size).
+- `app/playback.h/.cpp` — `PlaybackEngine`: A/V-synced preview. Audio is
+  the master clock when the file has audio (QAudioSink, 48 kHz/2ch);
+  wall clock for audio-less sources **and** as fallback when no audio
+  device exists (headless CI, muted machines). Video decoded on demand
+  from the clock (scrub-safe). Pure clock math is unit-tested.
+- App wiring: Media Bin import → background probe (worker thread → queued
+  signals) → status columns (Video 640×360 · 30 fps / Audio · 48 kHz /
+  Missing); double-click or right-click "Add to timeline"; Relink
+  re-points all clips (undoable) and re-probes; per-source proxy
+  generation on demand (skipped when source is already ≤ proxy height);
+  Program Monitor shows decoded frames + waveform strip + thumbnail
+  filmstrip; Timeline draws clips (waveform texture, selection, missing
+  badge) with a playhead; ruler scrubbing + click-to-seek; Space =
+  play/pause; frame step; clip switching on seek.
+- All new user-facing strings in en/ar/ur (212 keys per locale, parity
+  checked).
+
+**Verification (this machine: g++ 14.2, Qt 6.8.2, FFmpeg 7.1.5)**
+
+- Clean rebuild from scratch: **0 errors, 0 warnings** (-Wall -Wextra).
+- ctest: **42/42 pass** — 7 new `MediaM1.*` GTests against
+  `tests/fixtures/clip01.mp4` (probe, wav, waveform range, thumbnails,
+  seek+frame, interleaved audio, proxy 320×180 replayable) plus the new
+  `Guismoke.MediaPipeline` (headless offscreen: import → probe →
+  add-clip → first frame → play 500 ms → seek → aspect, **2.0 s**).
+- `--selftest` with `ARENA_SELFTEST_MEDIA=…/clip01.mp4`: **19/19 PASS**
+  (probe/waveform/thumbnail checks included).
+- Media-layer smoke (probe/video/wave/thumbs/proxy/audio) from M1 media
+  phase: all PASS; proxy ffprobe: 1.97 s video / 2.01 s audio @320×180.
+
+**Bugs found & fixed (logged in DECISIONS.md)**
+
+- D-015 re-entrant `retranslateUi()` → infinite recursion (latent since
+  M0; first hit by auto-project creation) → stack overflow SEGV.
+- D-016 Qt 6.8 QAudioSink in this environment is the QIODevice model
+  (`start()` returns the write device, `processedUSecs()`): playback
+  adapted; write loop is non-blocking (bytesFree check) so shutdown can
+  never deadlock on a stalled device.
+- D-017 no-audio fallback: playback keeps working (wall clock) when the
+  sink has no device.
+- Encoder flush (`avcodec_send_frame(enc, nullptr)`), proxy framerate /
+  time_base adoption, and a pump-loop control-flow bug (dangling `if`
+  swallowed the loop body → 2-frame proxy) from the media phase.
+
+**Not done / next**
+
+- M2 Timeline: ripple/roll/slip/slide edits, snap line + flash, markers,
+  I/O handles, multi-clip preview (jump-cut switching is M1's behavior),
+  per-clip in/out trimming, autosave on every command.
+- M3 Render, M4 Export as planned.
+
 ## 2026-10-12 — M0 Skeleton: verified ✅
 
 **Scope delivered**

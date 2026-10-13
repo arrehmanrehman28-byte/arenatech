@@ -68,12 +68,38 @@
 | Welcome (first run) | Logo, language picker, New Project / Open, recent projects, "What's new" card, credit link |
 | New Project | Name, resolution presets, fps, aspect (16:9/9:16/1:1/4:5), sample rate, 540p proxy toggle, **live preview line** |
 | Command palette (Ctrl+K) | Fuzzy search over every command with shortcuts; **Tab or `/ai` prefix** switches to natural-language mode |
-| Media Bin | Grid/list (M1), import, search/filter, bins, **missing-media badge + Relink** (file-level in M0) |
+| Media Bin | Rows with name / type+resolution / status, **live probe** (Probing… → "Video 640×360 · 30 fps"), import, **missing-media badge + Relink** (re-points all clips, re-probes) |
 | Export | Preset gallery cards with estimated size/time + batch queue table (M4) |
 | Subtitle Manager | Table of tracks by BCP-47 language, add/import (M5), translate + timing checks (M5/M6), reading-speed warnings (> 42 chars / > 17 cps, red underline) |
 | AI Panel | Violet status card (off/on), task cards (translate/chapters/titles/cuts), **Ask AI** with live streaming, result cards with Accept/Edit/Reject |
 | Settings | Grouped sidebar (General, Appearance, Language, Editing, Playback, Export, Hardware, AI, Privacy, Keyboard) + search; live apply where possible; "Restart required" only when truly needed |
 | About | "Arena Edit", version + build date, license notices, **Made by arenatechofficial.pages.dev** |
+
+## Media workflow (M1)
+
+1. **Import** — Media Bin ▸ Import (or double-click a file): files appear
+   immediately and are probed in the background (UI never blocks).
+2. **Add to timeline** — double-click a row or right-click ▸ "Add to
+   timeline". Without a project, a default 1920×1080 @ 30 fps project is
+   created automatically; the clip is appended to V1 (undoable).
+3. **Watch** — the Program Monitor shows the selected clip's frames with a
+   waveform strip and a thumbnail filmstrip underneath.
+4. **Play / pause** — Space or the play button. Playback is A/V-synced:
+   audio is the master clock when the file has audio; otherwise a wall
+   clock drives video (and when no audio device exists at all).
+5. **Scrub** — click/drag on the timeline ruler; the playhead follows, the
+   monitor jumps (clips switch as the playhead crosses them), timecode
+   stays SMPTE HH:MM:SS:FF in every language.
+6. **Proxy** — when the source is larger than the project's proxy height
+   (default 540p) and proxies are enabled, a small mp4 proxy is generated
+   on a worker thread (progress in the status bar); playback and scrubbing
+   then use the proxy. Failure falls back to full resolution.
+7. **Missing media** — red row status; right-click ▸ Relink picks a
+   replacement, all clips re-point (undoable), and the file is re-probed.
+
+Known M1 behavior: multi-clip playback switches sources at clip
+boundaries (jump cuts); per-clip in/out trimming, ripple edits, and snap
+arriving in M2.
 
 ## Interaction rules
 

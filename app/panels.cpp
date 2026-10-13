@@ -26,6 +26,11 @@ void PreviewSurface::setShowGuides(bool on) { m_guides = on; update(); }
 void PreviewSurface::setShowGrid(bool on) { m_grid = on; update(); }
 void PreviewSurface::setShowThirds(bool on) { m_thirds = on; update(); }
 void PreviewSurface::setAspect(double w, double h) { m_aspect = w / h; update(); }
+void PreviewSurface::setFrame(const QImage &img)
+{
+    m_frame = img;
+    update();
+}
 
 void PreviewSurface::paintEvent(QPaintEvent *)
 {
@@ -37,6 +42,15 @@ void PreviewSurface::paintEvent(QPaintEvent *)
     const double h = w / ar;
     const QRectF surface((width() - w) / 2, (height() - h) / 2, w, h);
     p.fillRect(surface, QColor(24, 26, 32));
+    if (!m_frame.isNull()) {
+        // Fit the frame into the surface, preserving its own aspect ratio.
+        const QSize target = surface.toRect().size();
+        const QImage fitted = m_frame.scaled(target, Qt::KeepAspectRatio,
+                                             Qt::FastTransformation);
+        p.drawImage(QRectF((width() - fitted.width()) / 2, (height() - fitted.height()) / 2,
+                           fitted.width(), fitted.height()),
+                    fitted);
+    }
     p.setPen(QColor(120, 130, 150, 140));
     p.drawRect(surface);
 
@@ -60,6 +74,74 @@ void PreviewSurface::paintEvent(QPaintEvent *)
         const QRectF title = surface.adjusted(surface.width() * 0.10, surface.height() * 0.10,
                                               -surface.width() * 0.10, -surface.height() * 0.10);
         p.drawRect(title);
+    }
+}
+
+// --- WaveformStrip -----------------------------------------------------------
+
+WaveformStrip::WaveformStrip(QWidget *parent) : QWidget(parent)
+{
+    setMaximumHeight(44);
+    setMinimumHeight(28);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+}
+
+void WaveformStrip::setPeaks(const QVector<Peak> &peaks)
+{
+    m_peaks = peaks;
+    update();
+}
+
+void WaveformStrip::paintEvent(QPaintEvent *)
+{
+    QPainter p(this);
+    p.fillRect(rect(), QColor(0, 0, 0, 160));
+    if (m_peaks.isEmpty()) return;
+    const double mid = height() / 2.0;
+    const QColor accent = palette().highlight().color();
+    const double step = double(width()) / m_peaks.size();
+    const double barW = qMax(1.0, step * 0.7);
+    p.setPen(QPen(accent, 1.0));
+    for (int i = 0; i < m_peaks.size(); ++i) {
+        const double x = i * step + (step - barW) / 2;
+        const double hi = mid - qMax(0.02, double(m_peaks[i].hi)) * (mid - 2);
+        const double lo = mid - qMin(-0.02, double(m_peaks[i].lo)) * (mid - 2);
+        p.drawLine(QPointF(x, lo), QPointF(x, hi));
+    }
+}
+
+// --- ThumbnailStrip ------------------------------------------------------------
+
+ThumbnailStrip::ThumbnailStrip(QWidget *parent) : QWidget(parent)
+{
+    setMaximumHeight(56);
+    setMinimumHeight(24);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+}
+
+void ThumbnailStrip::setThumbs(const QList<QImage> &thumbs)
+{
+    m_thumbs = thumbs;
+    update();
+}
+
+void ThumbnailStrip::paintEvent(QPaintEvent *)
+{
+    QPainter p(this);
+    p.fillRect(rect(), QColor(0, 0, 0, 120));
+    if (m_thumbs.isEmpty()) return;
+    const int h = height() - 8;
+    const double totalW = width();
+    const double gap = 4.0;
+    const double imgW = (totalW - gap * (m_thumbs.size() - 1)) / m_thumbs.size();
+    for (int i = 0; i < m_thumbs.size(); ++i) {
+        const double x = i * (imgW + gap);
+        const QImage fitted =
+            m_thumbs[i].scaled(QSize(int(imgW), h), Qt::KeepAspectRatio, Qt::FastTransformation);
+        const double fx = x + (imgW - fitted.width()) / 2;
+        p.drawImage(QRectF(fx, 4, fitted.width(), fitted.height()), fitted);
+        p.setPen(QPen(QColor(255, 255, 255, 60), 1));
+        p.drawRect(QRectF(x, 4, imgW, h));
     }
 }
 
@@ -102,31 +184,33 @@ MediaBinWidget::MediaBinWidget(QWidget *parent) : QWidget(parent)
     lay->setSpacing(8);
 
     m_tree = new QTreeWidget;
-    m_tree->setColumnCount(2);
-    m_tree->setHeaderLabels({arenaTr("common.name"), QString()});
+    m_tree->setColumnCount(3);
+    m_tree->setHeaderLabels({arenaTr("common.name"), arenaTr("media.type"),
+                             arenaTr("media.status")});
     m_tree->setRootIsDecorated(false);
     m_tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_tree->header()->setSectionResizeMode(1, QHeaderView::Fixed);
-    m_tree->header()->resizeSection(1, 90);
+    m_tree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
+    m_tree->header()->resizeSection(1, 168);
+    m_tree->header()->resizeSection(2, 80);
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *it, int) {
-        emit itemDoubleClicked(it->data(0, Qt::UserRole).toString());
+        const QString path = it->data(0, Qt::UserRole).toString();
+        emit itemDoubleClicked(path);
+        emit addToTimelineRequested(path);
     });
     connect(m_tree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
         auto *item = m_tree->itemAt(pos);
         if (!item) return;
+        const QString path = item->data(0, Qt::UserRole).toString();
         QMenu menu;
+        auto *addAct = menu.addAction(arenaTr("media.addToTimeline"));
         auto *relink = menu.addAction(arenaTr("panel.mediaBin.relink"));
         auto *chosen = menu.exec(m_tree->viewport()->mapToGlobal(pos));
-        if (chosen == relink) {
-            const QString cur = item->data(0, Qt::UserRole).toString();
-            const QString f = QFileDialog::getOpenFileName(this, arenaTr("dlg.open.title"), QFileInfo(cur).absolutePath());
-            if (!f.isEmpty()) {
-                const int row = m_tree->indexOfTopLevelItem(item);
-                m_paths[row] = f;
-                item->setText(0, QFileInfo(f).fileName());
-                refreshBadges();
-            }
+        if (chosen == addAct) {
+            emit addToTimelineRequested(path);
+        } else if (chosen == relink) {
+            emit relinkRequested(path);
         }
     });
     lay->addWidget(m_tree, 1);
@@ -157,27 +241,88 @@ MediaBinWidget::MediaBinWidget(QWidget *parent) : QWidget(parent)
 
 void MediaBinWidget::retranslateUi()
 {
-    m_tree->setHeaderLabels({arenaTr("common.name"), arenaTr("media.type")});
+    m_tree->setHeaderLabels({arenaTr("common.name"), arenaTr("media.type"),
+                             arenaTr("media.status")});
     m_import->setText(arenaTr("panel.mediaBin.import"));
     if (m_emptyTitle) m_emptyTitle->setText(arenaTr("panel.mediaBin.empty.title"));
     if (m_emptyBody) m_emptyBody->setText(arenaTr("panel.mediaBin.empty.body"));
+    // Refresh per-item status text for items not yet probed.
+    for (int i = 0; i < m_tree->topLevelItemCount(); ++i) {
+        auto *item = m_tree->topLevelItem(i);
+        if (item->text(1).isEmpty() || item->text(1) == arenaTr("media.probing"))
+            item->setText(1, arenaTr("media.probing"));
+    }
 }
 
 void MediaBinWidget::addPaths(const QStringList &paths)
 {
+    QStringList fresh;
     m_paths += paths;
     for (const QString &p : paths) {
+        if (itemForPath(p)) continue;
+        fresh << p;
         auto *item = new QTreeWidgetItem(m_tree);
         item->setText(0, QFileInfo(p).fileName());
+        item->setText(1, arenaTr("media.probing"));
         item->setData(0, Qt::UserRole, p);
     }
     m_empty->hide();
     m_tree->show();
     m_import->show();
     refreshBadges();
+    if (!fresh.isEmpty()) emit mediaImported(fresh);
 }
 
 QStringList MediaBinWidget::paths() const { return m_paths; }
+
+QTreeWidgetItem *MediaBinWidget::itemForPath(const QString &path) const
+{
+    for (int i = 0; i < m_tree->topLevelItemCount(); ++i) {
+        auto *item = m_tree->topLevelItem(i);
+        if (item->data(0, Qt::UserRole).toString() == path) return item;
+    }
+    return nullptr;
+}
+
+void MediaBinWidget::setItemProbing(const QString &path)
+{
+    if (auto *item = itemForPath(path)) item->setText(1, arenaTr("media.probing"));
+}
+
+void MediaBinWidget::setItemInfo(const QString &path, const MediaInfo &info)
+{
+    auto *item = itemForPath(path);
+    if (!item) return;
+    QString meta;
+    if (info.exists && !info.error.isEmpty()) {
+        meta = arenaTr("media.loadError", {{QStringLiteral("file"), QFileInfo(path).fileName()}});
+    } else if (!info.exists) {
+        meta = arenaTr("media.missing");
+    } else if (info.type == MediaType::Video) {
+        meta = arenaTr("media.video") + QStringLiteral(" ") +
+               QStringLiteral("%1×%2").arg(info.width).arg(info.height);
+        if (info.fps > 0.0)
+            meta += QStringLiteral(" · %1 fps").arg(info.fps, 0, 'g', 3);
+    } else if (info.type == MediaType::Audio) {
+        meta = arenaTr("media.audio") +
+               QStringLiteral(" · %1 kHz").arg(info.sampleRate / 1000);
+    } else {
+        meta = arenaTr("media.unknownType");
+    }
+    item->setText(1, meta);
+}
+
+void MediaBinWidget::replacePath(const QString &oldPath, const QString &newPath)
+{
+    const int row = m_paths.indexOf(oldPath);
+    auto *item = itemForPath(oldPath);
+    if (row < 0 || !item) return;
+    m_paths[row] = newPath;
+    item->setText(0, QFileInfo(newPath).fileName());
+    item->setData(0, Qt::UserRole, newPath);
+    item->setText(1, arenaTr("media.probing"));
+    refreshBadges();
+}
 
 void MediaBinWidget::refreshBadges()
 {
@@ -185,8 +330,9 @@ void MediaBinWidget::refreshBadges()
         auto *item = m_tree->topLevelItem(i);
         const QString path = item->data(0, Qt::UserRole).toString();
         const bool missing = !QFileInfo::exists(path);
-        item->setText(1, missing ? arenaTr("media.missing") : arenaTr("media.ok"));
-        item->setForeground(1, missing ? QBrush(QColor(0xE5, 0x53, 0x4B)) : QBrush(QColor(0x3D, 0xBE, 0x7B)));
+        item->setText(2, missing ? arenaTr("media.missing") : arenaTr("media.ok"));
+        item->setForeground(2, missing ? QBrush(QColor(0xE5, 0x53, 0x4B))
+                                       : QBrush(QColor(0x3D, 0xBE, 0x7B)));
     }
 }
 

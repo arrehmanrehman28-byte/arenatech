@@ -44,7 +44,10 @@ jobs:
         run: ctest --output-on-failure
 
       - name: Headless selftest
-        run: QT_QPA_PLATFORM=offscreen ./build/app/arenaedit --selftest
+        run: |
+          QT_QPA_PLATFORM=offscreen \
+          ARENA_SELFTEST_MEDIA="$GITHUB_WORKSPACE/tests/fixtures/clip01.mp4" \
+          ./build/app/arenaedit --selftest
 
       - name: Benchmark
         run: bash tools/benchmark.sh

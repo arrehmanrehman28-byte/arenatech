@@ -8,8 +8,20 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QToolButton>
+#include <QVector>
+
+#include "media.h"
 
 namespace arena {
+
+// One clip as the canvas should draw it (frames on its track).
+struct ClipView {
+    qint64 offsetFrames = 0;
+    qint64 durationFrames = 0;
+    QVector<Peak> waveform;
+    bool selected = false; // clip currently shown in the monitor
+    bool missing = false;  // source media missing
+};
 
 // Ruler + track bands drawn from the current zoom and fps.
 class TimelineCanvas : public QWidget {
@@ -22,10 +34,21 @@ public:
     void setTracks(const QStringList &trackIds, const QStringList &trackNames);
     void setHasProject(bool has);
     double zoom() const { return m_zoom; }
+    // Clips live on the first (video) track.
+    void setClips(const QList<ClipView> &clips);
+    void setPlayhead(qint64 frame);
+    double framesPerPx() const { return m_framesPerPx * m_zoom; }
+    qint64 frameAtX(double x) const;
+
+signals:
+    void seekRequested(qint64 frame); // ruler scrub (press + drag)
+    void clipClicked(qint64 frame);   // click a clip to select it
 
 protected:
     void paintEvent(QPaintEvent *) override;
     void wheelEvent(QWheelEvent *) override;
+    void mousePressEvent(QMouseEvent *) override;
+    void mouseMoveEvent(QMouseEvent *) override;
 
 private:
     double m_fps = 30.0;
@@ -34,6 +57,9 @@ private:
     QStringList m_trackIds;
     QStringList m_trackNames;
     bool m_hasProject = false;
+    QList<ClipView> m_clips;
+    qint64 m_playhead = 0;
+    bool m_scrubbing = false;
 };
 
 class TimelineWidget : public QWidget {
@@ -47,6 +73,8 @@ public:
 
 signals:
     void zoomChanged(double zoom);
+    void seekRequested(qint64 frame);
+    void clipClicked(qint64 frame);
 
 private:
     QToolButton *m_snap;

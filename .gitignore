@@ -4,3 +4,9 @@ __pycache__/
 CMakeUserPresets.json
 *.user
 .DS_Store
+
+# Sandbox session artifacts (not project files)
+.cache/
+.config/
+.local/
+.sudo_as_admin_successful

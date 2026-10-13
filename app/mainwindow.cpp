@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "panels.h"
+#include "playback.h"
 #include "timeline.h"
 #include "aipanel.h"
 #include "dialogs.h"
@@ -25,15 +26,26 @@
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QToolBar>
+#include <QCryptographicHash>
+#include <QKeyEvent>
+#include <QUuid>
 #include <QWidget>
+
+#include <algorithm>
+#include <thread>
 
 namespace arena {
 
 MainWindow::MainWindow(Themer *themer, QWidget *parent)
     : QMainWindow(parent), m_themer(themer), m_settings(&Settings::instance()),
       m_kilo(new KiloClient(*m_settings, this)),
-      m_autosave(new Autosave(this))
+      m_autosave(new Autosave(this)),
+      m_engine(new PlaybackEngine(this))
 {
+    connect(m_engine, &PlaybackEngine::frameReady, this, &MainWindow::onEngineFrame);
+    connect(m_engine, &PlaybackEngine::positionChanged, this, &MainWindow::onEnginePosition);
+    connect(m_engine, &PlaybackEngine::ended, this, &MainWindow::onEngineEnded);
+    connect(m_engine, &PlaybackEngine::playStateChanged, this, &MainWindow::onPlayStateChanged);
     setWindowTitle(QStringLiteral("Arena Edit"));
     setMinimumSize(1100, 680);
     resize(1440, 860);
@@ -242,25 +254,30 @@ void MainWindow::buildCentral()
     connect(grid, &QCheckBox::toggled, m_monitor, &PreviewSurface::setShowGrid);
     connect(thirds, &QCheckBox::toggled, m_monitor, &PreviewSurface::setShowThirds);
 
-    // Virtual transport (playhead) until real decode lands in M1.
-    auto advance = [this](int dir) {
-        if (!m_project) return;
-        m_playhead += dir;
-        m_timecode->setText(framesToTimecode(m_playhead, m_project->fps));
-    };
-    connect(play, &QToolButton::clicked, this, [this, advance] {
-        m_transportSpeed = (m_transportSpeed >= 0) ? 1 : 2;
-        m_transportTimer.start(qMax(1, int(1000.0 / (m_project ? m_project->fps : 30.0))));
+    // M1 transport: real decode + A/V-synced playback (see PlaybackEngine).
+    m_playBtn = play;
+    connect(play, &QToolButton::clicked, this, &MainWindow::togglePlayback);
+    connect(back, &QToolButton::clicked, this, [this] {
+        if (m_project) seekToFrame(0);
     });
-    connect(back, &QToolButton::clicked, this, [this, advance] { m_transportSpeed = -2; (void)advance; });
-    connect(fwd, &QToolButton::clicked, this, [this, advance] { m_transportSpeed = 2; (void)advance; });
-    connect(stepBack, &QToolButton::clicked, this, [this, advance] { m_transportTimer.stop(); advance(-1); });
-    connect(stepFwd, &QToolButton::clicked, this, [this, advance] { m_transportTimer.stop(); advance(1); });
-    m_transportTimer.setInterval(33);
-    connect(&m_transportTimer, &QTimer::timeout, this, [this, advance] {
-        if (!m_project) { m_transportTimer.stop(); return; }
-        if (m_transportSpeed > 0) advance(m_transportSpeed);
-        else if (m_transportSpeed < 0) advance(m_transportSpeed);
+    connect(fwd, &QToolButton::clicked, this, [this] {
+        if (!m_project) return;
+        qint64 total = 0;
+        if (!m_project->tracks.isEmpty())
+            for (const Clip &c : m_project->tracks.first().clips) total = c.offset + c.duration();
+        seekToFrame(qMax<qint64>(0, total - 1));
+    });
+    connect(stepBack, &QToolButton::clicked, this, [this] {
+        if (m_engine && m_engine->isOpen())
+            m_engine->stepFrame(-1);
+        else
+            seekToFrame(m_playhead - 1);
+    });
+    connect(stepFwd, &QToolButton::clicked, this, [this] {
+        if (m_engine && m_engine->isOpen())
+            m_engine->stepFrame(1);
+        else
+            seekToFrame(m_playhead + 1);
     });
 
     transport->addWidget(back);
@@ -276,6 +293,10 @@ void MainWindow::buildCentral()
     transport->addWidget(thirds);
     monLay->addLayout(transport);
     monLay->addWidget(m_monitor, 1);
+    m_waveform = new WaveformStrip;
+    m_thumbs = new ThumbnailStrip;
+    monLay->addWidget(m_waveform);
+    monLay->addWidget(m_thumbs);
 
     m_timeline = new TimelineWidget;
     connect(m_timeline, &TimelineWidget::zoomChanged, this, [](double) {});
@@ -295,8 +316,22 @@ void MainWindow::buildDocks()
     mediaDock->setWidget(m_mediaBin);
     mediaDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     addDockWidget(Qt::LeftDockWidgetArea, mediaDock);
-    connect(m_mediaBin, &MediaBinWidget::itemDoubleClicked, this, [this](const QString &path) {
-        m_monitorNote = arenaTr("media.previewPhase") + QStringLiteral(" — ") + path;
+    connect(m_mediaBin, &MediaBinWidget::addToTimelineRequested, this,
+            &MainWindow::addClipToTimeline);
+    connect(m_mediaBin, &MediaBinWidget::relinkRequested, this, &MainWindow::relinkMedia);
+    connect(m_mediaBin, &MediaBinWidget::mediaImported, this, &MainWindow::importMedia);
+    connect(m_timeline, &TimelineWidget::seekRequested, this, &MainWindow::seekToFrame);
+    connect(m_timeline, &TimelineWidget::clipClicked, this, [this](qint64 frame) {
+        if (!m_project) return;
+        for (const Track &t : m_project->tracks) {
+            if (t.type != TrackType::Video) continue;
+            for (const Clip &c : t.clips) {
+                if (frame >= c.offset && frame < c.offset + c.duration()) {
+                    selectClipAt(c.sourceRef, frame);
+                    return;
+                }
+            }
+        }
     });
 
     m_inspector = new InspectorWidget;
@@ -500,6 +535,11 @@ bool MainWindow::newProject(const NewProjectResult &r)
     m_undoStack.clear();
     m_playhead = 0;
     m_transportTimer.stop();
+    m_engine->close();
+    m_currentSource.clear();
+    m_monitor->setFrame(QImage());
+    m_waveform->setPeaks(QVector<Peak>());
+    m_thumbs->setThumbs(QList<QImage>());
     m_subtitles->clearTracks();
     m_autosave->setProjectPath(QString());
     refreshProjectViews();
@@ -519,6 +559,11 @@ bool MainWindow::openProjectFile(const QString &path)
     m_undoStack.clear();
     m_playhead = 0;
     m_transportTimer.stop();
+    m_engine->close();
+    m_currentSource.clear();
+    m_monitor->setFrame(QImage());
+    m_waveform->setPeaks(QVector<Peak>());
+    m_thumbs->setThumbs(QList<QImage>());
     m_subtitles->clearTracks();
     for (const auto &st : p.subtitleTracks)
         m_subtitles->addTrack(st.name, st.language);
@@ -580,6 +625,11 @@ void MainWindow::closeProject()
     m_projectPath.clear();
     m_undoStack.clear();
     m_transportTimer.stop();
+    m_engine->close();
+    m_currentSource.clear();
+    m_monitor->setFrame(QImage());
+    m_waveform->setPeaks(QVector<Peak>());
+    m_thumbs->setThumbs(QList<QImage>());
     m_subtitles->clearTracks();
     m_autosave->setProjectPath(QString());
     refreshProjectViews();
@@ -681,7 +731,12 @@ void MainWindow::retranslateUi()
                                 {{QStringLiteral("used"), m_kilo->budget().used()},
                                  {QStringLiteral("limit"), m_kilo->budget().limit()}}));
     tickSecond();
-    if (m_project) refreshProjectViews();
+    // Re-apply project-specific labels (without calling refreshProjectViews,
+    // which ends with retranslateUi and would recurse).
+    if (m_project) {
+        m_fps->setText(arenaTr("status.fps", {{QStringLiteral("fps"), QString::number(m_project->fps, 'g', 3)}}));
+        m_timecode->setText(framesToTimecode(m_playhead, m_project->fps));
+    }
 }
 
 void MainWindow::applyLanguage()
@@ -727,5 +782,424 @@ void MainWindow::showWelcomeIfNeeded()
     if (!lang.isEmpty()) I18n::instance().setLocale(lang);
     m_settings->setFirstRunDone();
 }
+
+// --- M1 media pipeline ---------------------------------------------------------
+
+namespace {
+
+// Append a clip to a video track (undoable).
+struct AddClipCommand : public Command {
+    Track *track = nullptr;
+    Clip clip;
+    AddClipCommand(Track *t, Clip c) : track(t), clip(std::move(c)) {}
+    void execute() override { track->clips.append(clip); }
+    void undo() override
+    {
+        for (int i = track->clips.size() - 1; i >= 0; --i)
+            if (track->clips[i].id == clip.id) {
+                track->clips.removeAt(i);
+                break;
+            }
+    }
+    QString actionName() const override
+    {
+        return arenaTr("media.clipAdded", {{QStringLiteral("track"), track->name}});
+    }
+    int retainedBytes() const override { return 384; }
+};
+
+// Re-point all clips from one source to another (undoable).
+struct RelinkCommand : public Command {
+    Project *project = nullptr;
+    QString from;
+    QString to;
+    RelinkCommand(Project *p, const QString &f, const QString &t)
+        : project(p), from(f), to(t)
+    {
+    }
+    void execute() override
+    {
+        for (Track &t : project->tracks)
+            for (Clip &c : t.clips)
+                if (c.sourceRef == from) c.sourceRef = to;
+    }
+    void undo() override
+    {
+        for (Track &t : project->tracks)
+            for (Clip &c : t.clips)
+                if (c.sourceRef == to) c.sourceRef = from;
+    }
+    QString actionName() const override { return arenaTr("media.relinked"); }
+    int retainedBytes() const override { return 512; }
+};
+
+} // namespace
+
+QImage MainWindow::previewImage() const
+{
+    return m_monitor ? m_monitor->frame() : QImage();
+}
+
+MediaInfo MainWindow::mediaInfo(const QString &path) const
+{
+    return m_mediaInfo.value(path);
+}
+
+void MainWindow::importMedia(const QStringList &paths)
+{
+    for (const QString &p : paths) {
+        if (m_mediaInfo.contains(p)) continue;
+        const MediaInfo stub = MediaProbe::probe(p);
+        if (!stub.exists) {
+            m_mediaInfo.insert(p, stub);
+            m_mediaBin->setItemInfo(p, stub);
+            continue;
+        }
+        m_mediaBin->setItemProbing(p);
+        probeMedia(p);
+    }
+}
+
+void MainWindow::probeMedia(const QString &path)
+{
+    std::thread([path, this] {
+        MediaInfo info;
+        QString err;
+        if (!MediaProbe::probeFull(path, &info, &err)) {
+            info = MediaProbe::probe(path);
+            info.error = err;
+        }
+        QMetaObject::invokeMethod(this, [this, path, info] { onMediaProbed(path, info); },
+                                  Qt::QueuedConnection);
+    }).detach();
+}
+
+void MainWindow::onMediaProbed(const QString &path, const MediaInfo &info)
+{
+    m_mediaInfo.insert(path, info);
+    m_mediaBin->setItemInfo(path, info);
+    maybeStartProxy(path, info);
+    // If a monitor is already aimed at this source, (re)open the engine.
+    if (m_currentSource == path && m_engine->isOpen() && m_engineSource != playablePathFor(path)) {
+        selectClipAt(path, m_playhead);
+    }
+}
+
+void MainWindow::maybeStartProxy(const QString &path, const MediaInfo &info)
+{
+    if (!m_project || !m_project->proxy.enabled) return;
+    if (!info.hasVideo || info.height <= 0) return;
+    if (info.height <= m_project->proxy.height) return; // already small enough
+    if (m_proxies.contains(path) && QFileInfo::exists(m_proxies.value(path))) return;
+    const QString dir = ProxyGenerator::defaultProxyDir();
+    const QFileInfo fi(path);
+    const QByteArray digest = QCryptographicHash::hash(
+        (fi.absoluteFilePath() + QStringLiteral("|") + QString::number(fi.size())).toUtf8(),
+        QCryptographicHash::Sha1);
+    const QString proxyPath = dir + QStringLiteral("/proxy_") +
+                              QString::fromLatin1(digest.toHex().left(16)) +
+                              QStringLiteral(".mp4");
+    if (QFileInfo::exists(proxyPath) &&
+        QFileInfo(proxyPath).lastModified() >= fi.lastModified()) {
+        m_proxies.insert(path, proxyPath);
+        return;
+    }
+    const int targetHeight = m_project->proxy.height;
+    std::thread([this, path, proxyPath, targetHeight] {
+        QString err;
+        std::function<void(double)> prog = [this](double d) {
+            const int pct = static_cast<int>(d * 100.0);
+            QMetaObject::invokeMethod(
+                this, [this, pct] {
+                    statusBar()->showMessage(
+                        arenaTr("media.proxying", {{QStringLiteral("pct"), pct}}), 800);
+                },
+                Qt::QueuedConnection);
+        };
+        const bool ok = ProxyGenerator::generate(path, proxyPath, targetHeight, &err, &prog);
+        const QString finalErr = ok ? QString() : err;
+        QMetaObject::invokeMethod(
+            this, [this, path, proxyPath, finalErr] {
+                onProxyReady(path, proxyPath, finalErr);
+            },
+            Qt::QueuedConnection);
+    }).detach();
+}
+
+void MainWindow::onProxyReady(const QString &source, const QString &proxy, const QString &err)
+{
+    if (err.isEmpty()) {
+        m_proxies.insert(source, proxy);
+        statusBar()->showMessage(arenaTr("media.proxyReady"), 3000);
+    } else {
+        // Fall back to full resolution (works, just slower scrubbing).
+        statusBar()->showMessage(
+            arenaTr("media.proxyFailed", {{QStringLiteral("err"), err}}), 5000);
+    }
+}
+
+QString MainWindow::playablePathFor(const QString &path) const
+{
+    if (m_proxies.contains(path) && QFileInfo::exists(m_proxies.value(path)))
+        return m_proxies.value(path);
+    return path;
+}
+
+void MainWindow::addClipToTimeline(const QString &path)
+{
+    if (!m_project) {
+        NewProjectResult r; // Defaults: 1920x1080 @ 30 fps, proxies on.
+        newProject(r);
+    }
+    const MediaInfo info = m_mediaInfo.value(path);
+    if (!info.exists) {
+        statusBar()->showMessage(arenaTr("media.missing"), 3000);
+        return;
+    }
+    if (info.exists && info.durationMs <= 0 && !info.hasVideo && !info.hasAudio) {
+        statusBar()->showMessage(arenaTr("media.probing"), 2000); // still probing
+        return;
+    }
+    if (!info.error.isEmpty()) {
+        statusBar()->showMessage(
+            arenaTr("media.loadError", {{QStringLiteral("file"), QFileInfo(path).fileName()}}),
+            4000);
+        return;
+    }
+    Track *vtrack = nullptr;
+    for (Track &t : m_project->tracks)
+        if (t.type == TrackType::Video) {
+            vtrack = &t;
+            break;
+        }
+    if (!vtrack) return;
+
+    const double fps = m_project->fps;
+    const qint64 durFrames =
+        info.durationMs > 0 ? qMax<qint64>(1, qRound(info.durationMs / 1000.0 * fps))
+                            : qMax<qint64>(1, qRound(fps)); // unknown: 1 s
+    qint64 offset = 0;
+    for (const Clip &c : vtrack->clips) offset = qMax(offset, c.offset + c.duration());
+
+    Clip clip;
+    clip.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    clip.sourceRef = path;
+    clip.in = 0;
+    clip.out = durFrames;
+    clip.offset = offset;
+
+    m_undoStack.push(std::make_unique<AddClipCommand>(vtrack, clip));
+    m_currentSource = path;
+    selectClipAt(path, offset);
+    generateWaveformThumbs(path);
+    statusBar()->showMessage(
+        arenaTr("media.clipAdded", {{QStringLiteral("track"), vtrack->name}}), 2500);
+}
+
+void MainWindow::selectClipAt(const QString &source, qint64 timelineFrame)
+{
+    if (!m_project) return;
+    double relSec = 0.0;
+    for (const Track &t : m_project->tracks) {
+        if (t.type != TrackType::Video) continue;
+        for (const Clip &c : t.clips) {
+            if (c.sourceRef != source) continue;
+            relSec = double(timelineFrame - c.offset) / m_project->fps;
+            break;
+        }
+    }
+    m_currentSource = source;
+    const QString playable = playablePathFor(source);
+    QString err;
+    if (!m_engine->isOpen() || m_engineSource != playable) {
+        m_engine->close();
+        if (!m_engine->open(playable, &err)) {
+            statusBar()->showMessage(
+                arenaTr("media.loadError", {{QStringLiteral("file"), QFileInfo(source).fileName()}}),
+                4000);
+            m_currentSource.clear();
+            refreshTimeline();
+            updateTransportButtons();
+            return;
+        }
+        m_engineSource = playable;
+    }
+    m_engine->seekSec(std::clamp(relSec, 0.0, m_engine->durationSec()));
+    if (m_waveform->peaks().isEmpty() && m_wavePeaks.contains(source))
+        m_waveform->setPeaks(m_wavePeaks.value(source));
+    refreshTimeline();
+    updateTransportButtons();
+}
+
+void MainWindow::generateWaveformThumbs(const QString &path)
+{
+    const QString playable = playablePathFor(path);
+    std::thread([this, path, playable] {
+        QVector<Peak> peaks;
+        QString err;
+        WaveformGenerator::generate(playable, 120, &peaks, &err);
+        QList<QImage> thumbs;
+        Thumbnailer::generate(playable, 8, 44, &thumbs, nullptr);
+        QMetaObject::invokeMethod(
+            this, [this, path, peaks, thumbs] {
+                m_wavePeaks.insert(path, peaks);
+                if (m_currentSource == path) {
+                    m_waveform->setPeaks(peaks);
+                    m_thumbs->setThumbs(thumbs);
+                }
+                refreshTimeline();
+            },
+            Qt::QueuedConnection);
+    }).detach();
+}
+
+void MainWindow::refreshTimeline()
+{
+    if (!m_timeline) return;
+    if (!m_project) {
+        m_timeline->canvas()->setClips({});
+        return;
+    }
+    QList<ClipView> views;
+    bool done = false;
+    for (const Track &t : m_project->tracks) {
+        if (t.type != TrackType::Video || done) continue;
+        done = true; // canvas draws clips on the first video track
+        for (const Clip &c : t.clips) {
+            ClipView v;
+            v.offsetFrames = c.offset;
+            v.durationFrames = c.duration();
+            v.selected = (c.sourceRef == m_currentSource);
+            v.missing = !QFileInfo::exists(c.sourceRef);
+            if (m_wavePeaks.contains(c.sourceRef)) v.waveform = m_wavePeaks.value(c.sourceRef);
+            views.append(v);
+        }
+    }
+    m_timeline->canvas()->setClips(views);
+    m_timeline->canvas()->setPlayhead(m_playhead);
+}
+
+void MainWindow::seekToFrame(qint64 frame)
+{
+    if (!m_project) {
+        m_playhead = qMax<qint64>(0, frame);
+        return;
+    }
+    qint64 total = 0;
+    for (const Track &t : m_project->tracks)
+        if (t.type == TrackType::Video)
+            for (const Clip &c : t.clips) total = qMax(total, c.offset + c.duration());
+    const qint64 clamped = qBound<qint64>(0, frame, qMax<qint64>(0, total - 1));
+    m_playhead = clamped;
+    m_timecode->setText(framesToTimecode(clamped, m_project->fps));
+    m_timeline->canvas()->setPlayhead(clamped);
+    for (const Track &t : m_project->tracks) {
+        if (t.type != TrackType::Video) continue;
+        for (const Clip &c : t.clips) {
+            if (clamped < c.offset || clamped >= c.offset + c.duration()) continue;
+            if (c.sourceRef != m_currentSource) {
+                selectClipAt(c.sourceRef, clamped);
+            } else if (m_engine->isOpen()) {
+                m_engine->seekSec(double(clamped - c.offset) / m_project->fps);
+            }
+            return;
+        }
+    }
+}
+
+void MainWindow::onEngineFrame(const QImage &img, int)
+{
+    m_monitor->setFrame(img);
+}
+
+void MainWindow::onEnginePosition(double sec)
+{
+    if (!m_project || !m_engine->isPlaying()) return;
+    for (const Track &t : m_project->tracks) {
+        if (t.type != TrackType::Video) continue;
+        for (const Clip &c : t.clips) {
+            if (c.sourceRef != m_currentSource) continue;
+            m_playhead = c.offset + qRound(sec * m_project->fps);
+            if (m_playhead >= c.offset + c.duration()) m_playhead = c.offset + c.duration() - 1;
+            m_timecode->setText(framesToTimecode(m_playhead, m_project->fps));
+            m_timeline->canvas()->setPlayhead(m_playhead);
+            return;
+        }
+    }
+}
+
+void MainWindow::onEngineEnded()
+{
+    updateTransportButtons();
+}
+
+void MainWindow::onPlayStateChanged(bool)
+{
+    updateTransportButtons();
+}
+
+void MainWindow::togglePlayback()
+{
+    if (!m_engine->isOpen()) {
+        if (m_currentSource.isEmpty()) {
+            statusBar()->showMessage(arenaTr("media.noClips"), 2500);
+            return;
+        }
+        selectClipAt(m_currentSource, m_playhead);
+    }
+    if (m_engine->isPlaying())
+        m_engine->pause();
+    else
+        m_engine->play();
+    updateTransportButtons();
+}
+
+void MainWindow::updateTransportButtons()
+{
+    if (!m_playBtn) return;
+    const bool playing = m_engine && m_engine->isPlaying();
+    m_playBtn->setText(playing ? QStringLiteral("\u2759\u2759") : QStringLiteral("\u25B6"));
+    m_playBtn->setToolTip(arenaTr(playing ? "transport.pause" : "transport.play"));
+}
+
+void MainWindow::relinkMedia(const QString &oldPath)
+{
+    const QString f = QFileDialog::getOpenFileName(
+        this, arenaTr("panel.mediaBin.relink"), QFileInfo(oldPath).absolutePath(),
+        arenaTr("media.filter"));
+    if (f.isEmpty() || f == oldPath) return;
+    m_mediaBin->replacePath(oldPath, f);
+    if (m_project) {
+        m_undoStack.push(std::make_unique<RelinkCommand>(m_project.get(), oldPath, f));
+        m_autosave->setProjectChanged();
+    }
+    if (m_currentSource == oldPath) m_currentSource = f;
+    m_mediaInfo.remove(oldPath);
+    m_wavePeaks.remove(oldPath);
+    m_proxies.remove(oldPath);
+    m_engine->close();
+    m_engineSource.clear();
+    probeMedia(f);
+    refreshTimeline();
+    statusBar()->showMessage(arenaTr("media.relinked"), 2500);
+}
+
+void MainWindow::keyPressEvent(QKeyEvent *e)
+{
+    if (e->key() == Qt::Key_Space && e->modifiers() == Qt::NoModifier) {
+        if (auto *fw = qApp->focusWidget()) {
+            if (fw->inherits("QLineEdit") || fw->inherits("QPlainTextEdit") ||
+                fw->inherits("QTextEdit") || fw->inherits("QAbstractSpinBox")) {
+                QWidget::keyPressEvent(e);
+                return;
+            }
+        }
+        togglePlayback();
+        e->accept();
+        return;
+    }
+    QWidget::keyPressEvent(e);
+}
+
 
 } // namespace arena

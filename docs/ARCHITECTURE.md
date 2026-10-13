@@ -36,8 +36,12 @@ flowchart TB
 
     subgraph MEDIA["media/ (M1)"]
         MP[MediaProbe]
+        VD[VideoDecoder seek+frame]
+        AR[AudioReader resample 48k]
         PG[ProxyGenerator 540p]
         WF[WaveformGenerator]
+        TH[Thumbnailer]
+        PE[PlaybackEngine<br/>A/V sync (QAudioSink / wall clock)]
         FFM[FFmpeg LGPL<br/>demux/decode/encode<br/>NVDEC/QSV/AMF/D3D11VA]
     end
 
