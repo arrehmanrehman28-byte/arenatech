@@ -52,6 +52,11 @@ public:
     // Decode the frame at `sec` directly (used for scrubbing the monitor).
     QImage frameAtSec(double sec);
 
+    // Frames skipped while the decoder lagged the clock (displayed in the
+    // status bar during playback).
+    qint64 droppedFrames() const { return m_dropped; }
+    void resetDroppedCount() { m_dropped = 0; }
+
     // --- Pure clock math (unit-tested) ---
     // Frame index for a clock position (round-to-nearest, clamped at 0).
     static int targetFrame(double elapsedSec, double fps);
@@ -91,6 +96,7 @@ private:
 
     QTimer m_tick;
     int m_shownFrame = -1;
+    qint64 m_dropped = 0;
     static constexpr int kOutRate = 48000;
     static constexpr int kOutChannels = 2;
 };

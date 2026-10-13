@@ -389,6 +389,7 @@ void InspectorWidget::setClip(const ClipSelection &clip)
 {
     m_empty->hide();
     m_content->show();
+    m_clipId = clip.clipId;
     while (m_form->rowCount() > 0) m_form->removeRow(0);
     m_form->addRow(arenaTr("common.name"), new QLabel(clip.source));
     m_form->addRow(arenaTr("inspector.clip.sourceType"),
@@ -406,6 +407,114 @@ void InspectorWidget::setClip(const ClipSelection &clip)
         warn->setProperty("role", QStringLiteral("danger"));
         m_form->addRow(warn);
     }
+
+    // --- M3: effects editor -------------------------------------------------
+    auto *header = new QLabel(arenaTr("inspector.effects.title"));
+    QFont hf = header->font();
+    hf.setBold(true);
+    header->setFont(hf);
+    m_form->addRow(header);
+
+    QDoubleSpinBox *x = new QDoubleSpinBox; x->setRange(-100, 100); x->setSuffix(QStringLiteral(" %"));
+    QDoubleSpinBox *y = new QDoubleSpinBox; y->setRange(-100, 100); y->setSuffix(QStringLiteral(" %"));
+    QDoubleSpinBox *scale = new QDoubleSpinBox; scale->setRange(1, 400); scale->setSuffix(QStringLiteral(" %"));
+    QDoubleSpinBox *rot = new QDoubleSpinBox; rot->setRange(-180, 180); rot->setSuffix(QStringLiteral(" \u00B0"));
+    QDoubleSpinBox *opacity = new QDoubleSpinBox; opacity->setRange(0, 100); opacity->setSuffix(QStringLiteral(" %"));
+    QDoubleSpinBox *exposure = new QDoubleSpinBox; exposure->setRange(-4, 4); exposure->setDecimals(2);
+    QDoubleSpinBox *contrast = new QDoubleSpinBox; contrast->setRange(0, 2); contrast->setDecimals(2);
+    QDoubleSpinBox *saturation = new QDoubleSpinBox; saturation->setRange(0, 2); saturation->setDecimals(2);
+    QDoubleSpinBox *temperature = new QDoubleSpinBox; temperature->setRange(-100, 100);
+    QDoubleSpinBox *blur = new QDoubleSpinBox; blur->setRange(0, 50); blur->setDecimals(0);
+    QComboBox *transition = new QComboBox;
+    transition->addItem(arenaTr("inspector.fx.none"));
+    transition->addItem(arenaTr("inspector.fx.dissolve"));
+    transition->addItem(arenaTr("inspector.fx.fade"));
+    transition->addItem(arenaTr("inspector.fx.wipe"));
+    transition->addItem(arenaTr("inspector.fx.push"));
+    QDoubleSpinBox *tdur = new QDoubleSpinBox; tdur->setRange(0.1, 10); tdur->setSingleStep(0.1); tdur->setSuffix(QStringLiteral(" s"));
+
+    {
+        QDoubleSpinBox *spin[12] = {x, y, scale, rot, opacity, exposure, contrast,
+                                    saturation, temperature, blur, nullptr, tdur};
+        const QJsonObject tf = clip.effects.value(QStringLiteral("transform")).toObject();
+        const QJsonObject col = clip.effects.value(QStringLiteral("color")).toObject();
+        const QJsonObject op = clip.effects.value(QStringLiteral("opacity")).toObject();
+        const QJsonObject bl = clip.effects.value(QStringLiteral("blur")).toObject();
+        const QJsonObject tr = clip.effects.value(QStringLiteral("transition")).toObject();
+        spin[0]->setValue(qBound(-100.0, tf.value(QStringLiteral("x")).toDouble(0.0) * 100.0, 100.0));
+        spin[1]->setValue(qBound(-100.0, tf.value(QStringLiteral("y")).toDouble(0.0) * 100.0, 100.0));
+        spin[2]->setValue(qBound(1.0, tf.value(QStringLiteral("scale")).toDouble(1.0) * 100.0, 400.0));
+        spin[3]->setValue(qBound(-180.0, tf.value(QStringLiteral("rotation")).toDouble(0.0), 180.0));
+        spin[4]->setValue(qBound(0.0, op.value(QStringLiteral("value")).toDouble(1.0) * 100.0, 100.0));
+        spin[5]->setValue(qBound(-4.0, col.value(QStringLiteral("exposure")).toDouble(0.0), 4.0));
+        spin[6]->setValue(qBound(0.0, col.value(QStringLiteral("contrast")).toDouble(1.0), 2.0));
+        spin[7]->setValue(qBound(0.0, col.value(QStringLiteral("saturation")).toDouble(1.0), 2.0));
+        spin[8]->setValue(qBound(-100.0, col.value(QStringLiteral("temperature")).toDouble(0.0), 100.0));
+        spin[9]->setValue(bl.value(QStringLiteral("radius")).toInt(0));
+        const QString type = tr.value(QStringLiteral("type")).toString();
+        transition->setCurrentIndex(type == QStringLiteral("cross_dissolve") ? 1
+                                    : type == QStringLiteral("fade_to_black") ? 2
+                                    : type == QStringLiteral("wipe") ? 3
+                                    : type == QStringLiteral("push") ? 4 : 0);
+        const double durSec = tr.isEmpty() ? 1.0
+                                           : double(tr.value(QStringLiteral("duration")).toInt(30)) / qMax(1.0, clip.fps);
+        spin[11]->setValue(qBound(0.1, durSec, 10.0));
+    }
+
+    m_form->addRow(arenaTr("inspector.fx.x"), x);
+    m_form->addRow(arenaTr("inspector.fx.y"), y);
+    m_form->addRow(arenaTr("inspector.fx.scale"), scale);
+    m_form->addRow(arenaTr("inspector.fx.rotation"), rot);
+    m_form->addRow(arenaTr("inspector.fx.opacity"), opacity);
+    m_form->addRow(arenaTr("inspector.fx.exposure"), exposure);
+    m_form->addRow(arenaTr("inspector.fx.contrast"), contrast);
+    m_form->addRow(arenaTr("inspector.fx.saturation"), saturation);
+    m_form->addRow(arenaTr("inspector.fx.temperature"), temperature);
+    m_form->addRow(arenaTr("inspector.fx.blur"), blur);
+    m_form->addRow(arenaTr("inspector.fx.transition"), transition);
+    m_form->addRow(arenaTr("inspector.fx.transitionDuration"), tdur);
+
+    auto *apply = new QPushButton(arenaTr("inspector.fx.apply"));
+    connect(apply, &QPushButton::clicked, this, [this, x, y, scale, rot, opacity,
+                                                 exposure, contrast, saturation,
+                                                 temperature, blur, transition,
+                                                 tdur, fps = clip.fps]() {
+        QJsonObject fx;
+        QJsonObject tf;
+        const double xF = x->value() / 100.0;
+        const double yF = y->value() / 100.0;
+        const double sc = scale->value() / 100.0;
+        const double ro = rot->value();
+        if (qAbs(xF) > 1e-9) tf[QStringLiteral("x")] = xF;
+        if (qAbs(yF) > 1e-9) tf[QStringLiteral("y")] = yF;
+        if (qAbs(sc - 1.0) > 1e-9) tf[QStringLiteral("scale")] = sc;
+        if (qAbs(ro) > 1e-9) tf[QStringLiteral("rotation")] = ro;
+        if (!tf.isEmpty()) fx[QStringLiteral("transform")] = tf;
+        const double op = opacity->value() / 100.0;
+        if (qAbs(op - 1.0) > 1e-9)
+            fx[QStringLiteral("opacity")] = QJsonObject{{QStringLiteral("value"), op}};
+        QJsonObject col;
+        if (qAbs(exposure->value()) > 1e-9) col[QStringLiteral("exposure")] = exposure->value();
+        if (qAbs(contrast->value() - 1.0) > 1e-9) col[QStringLiteral("contrast")] = contrast->value();
+        if (qAbs(saturation->value() - 1.0) > 1e-9) col[QStringLiteral("saturation")] = saturation->value();
+        if (qAbs(temperature->value()) > 1e-9) col[QStringLiteral("temperature")] = temperature->value();
+        if (!col.isEmpty()) fx[QStringLiteral("color")] = col;
+        const int br = int(blur->value());
+        if (br > 0) fx[QStringLiteral("blur")] = QJsonObject{{QStringLiteral("radius"), br}};
+        const int ti = transition->currentIndex();
+        if (ti > 0) {
+            static const QString types[4] = {QStringLiteral("cross_dissolve"),
+                                             QStringLiteral("fade_to_black"),
+                                             QStringLiteral("wipe"),
+                                             QStringLiteral("push")};
+            fx[QStringLiteral("transition")] =
+                QJsonObject{{QStringLiteral("type"), types[ti - 1]},
+                            {QStringLiteral("duration"),
+                             qMax(1, int(tdur->value() * fps + 0.5))}};
+        }
+        emit effectsEdited(m_clipId, fx);
+    });
+    m_form->addRow(QString(), apply);
 }
 
 void InspectorWidget::clearSelection()

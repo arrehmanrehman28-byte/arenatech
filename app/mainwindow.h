@@ -9,6 +9,7 @@
 
 #include "command.h"
 #include "commandpalette.h"
+#include "compositor.h"
 #include "media.h"
 #include "project.h"
 #include "timeline.h"
@@ -108,12 +109,18 @@ private:
     void selectClipAt(const QString &source, qint64 timelineFrame);
     void deleteSelectedClip();
     void onTrimRequested(const QList<ClipPatch> &patches);
+    void onEffectsEdited(const QString &clipId, const QJsonObject &fx);
     void rippleTrim(bool rightSide); // Q / W at the playhead
     void addMarkerAt(qint64 frame);
     void removeMarkerAt(qint64 frame);
     void refreshTimeline();
     void generateWaveformThumbs(const QString &path);
     void onEngineFrame(const QImage &img, int frame);
+    // M3: render the project frame at `frame`. `srcFrame` is the frame the
+    // engine just decoded for the current source (reused by the fetcher);
+    // falls back to the plain source frame when no clip has effects.
+    QImage renderProjectFrame(qint64 frame, const QImage &srcFrame) const;
+    void applyPlaybackResolution();
     void onEnginePosition(double sec);
     void onEngineEnded();
     void onPlayStateChanged(bool playing);
@@ -161,6 +168,7 @@ private:
     QLabel *m_cache = nullptr;
     QLabel *m_mem = nullptr;
     QLabel *m_aiBudget = nullptr;
+    QLabel *m_dropped = nullptr;
     QTimer m_secondTimer;
 
     // panels
@@ -173,6 +181,8 @@ private:
     WaveformStrip *m_waveform = nullptr;
     ThumbnailStrip *m_thumbs = nullptr;
     QComboBox *m_playbackRes = nullptr;
+    int m_playbackScale = 1; // 1 (Full), 2 (Half), 4 (Quarter)
+    mutable Compositor::FrameCache m_frameCache;
 
     // actions
     QAction *m_undoAct = nullptr;

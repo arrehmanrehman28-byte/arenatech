@@ -4,14 +4,20 @@
 // Runs on the offscreen platform; audio output is unavailable in CI, so
 // playback exercises the wall-clock fallback path.
 #include <QApplication>
+#include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QEventLoop>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QMouseEvent>
 #include <QPixmap>
+#include <QPushButton>
 #include <QTimer>
 #include <cstdio>
 
+#include "i18n.h"
 #include "mainwindow.h"
+#include "panels.h"
 #include "themer.h"
 #include "timeline.h"
 
@@ -42,6 +48,8 @@ int main(int argc, char **argv)
     qputenv("ARENA_SELFTEST", "1"); // skip the first-run dialog headless
     QApplication app(argc, argv);
     setvbuf(stdout, nullptr, _IONBF, 0);
+    if (!I18n::instance().loadDirectory(QStringLiteral(ARENA_I18N_DIR)))
+        fprintf(stderr, "warning: i18n directory not found\n");
     const QString media = QString::fromLocal8Bit(argv[1]);
 
     Themer themer;
@@ -280,6 +288,90 @@ int main(int argc, char **argv)
     for (int i = 0; i < 3; ++i) w.undo();
     spin(50);
     check(proj->markers.isEmpty(), "undo x3 removes all markers");
+
+    // --- M3: effects (Inspector -> compositor -> monitor) -------------------
+    // Select the clip so the Inspector builds the effects editor.
+    {
+        const int xSel = 56 + 3 + int((clipStart + 2) / canvas->framesPerPx());
+        QMouseEvent ev(QEvent::MouseButtonPress, QPointF(xSel, 12), QPointF(xSel, 12),
+                       Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(canvas, &ev);
+        spin(50);
+    }
+    check(w.selectedClipId() == clipId, "M3: clip selected for effects");
+
+    // Baseline frame (fast path: no effects -> raw source frame).
+    w.seekToFrame(20);
+    for (int i = 0; i < 60 && w.previewImage().isNull(); ++i) spin(50);
+    const QImage base = w.previewImage();
+    check(!base.isNull(), "M3: baseline frame before effects");
+
+    // Inspector: raise exposure to +1 stop, click Apply.
+    auto *insp = w.findChild<InspectorWidget *>();
+    check(insp != nullptr, "M3: inspector widget found");
+    if (insp) {
+        const auto spins = insp->findChildren<QDoubleSpinBox *>();
+        check(spins.size() >= 11, "M3: effects editor spinboxes present");
+        if (spins.size() >= 11) {
+            spins[5]->setValue(1.0); // exposure
+            auto *apply = insp->findChild<QPushButton *>();
+            check(apply != nullptr, "M3: apply button present");
+            if (apply) apply->click();
+            spin(100);
+        }
+    }
+    const Clip *cfx = clip1();
+    check(cfx && cfx->effects.value(QStringLiteral("color")).toObject()
+                       .value(QStringLiteral("exposure")).toDouble() == 1.0,
+          "M3: apply stores exposure=1.0 (undoable command)");
+
+    // Monitor: composited frame (project canvas) with +1 stop -> brighter.
+    w.seekToFrame(20);
+    for (int i = 0; i < 60; ++i) { spin(50); }
+    const QImage fx = w.previewImage();
+    check(!fx.isNull(), "M3: monitor renders through compositor");
+    if (!base.isNull() && !fx.isNull()) {
+        const QImage b2 = base.scaled(fx.size());
+        int sumB = 0, sumF = 0;
+        for (int y = 0; y < fx.height(); y += 17)
+            for (int x = 0; x < fx.width(); x += 23) {
+                sumB += qGray(b2.pixel(x, y));
+                sumF += qGray(fx.pixel(x, y));
+            }
+        check(sumF > sumB, "M3: +1 stop exposure is visibly brighter");
+    }
+
+    // Undo -> effects gone, monitor back to the raw fast path.
+    w.undo();
+    spin(100);
+    check(clip1() && clip1()->effects.isEmpty(), "M3: undo clears effects");
+    w.seekToFrame(20);
+    for (int i = 0; i < 60 && w.previewImage().isNull(); ++i) spin(50);
+    check(w.previewImage().size() == base.size(), "M3: fast path frame size restored");
+
+    // --- M3.4: playback resolution + dropped-frames status -------------------
+    QComboBox *resCombo = nullptr;
+    for (auto *cb : w.findChildren<QComboBox *>())
+        if (cb->itemText(0) == QStringLiteral("Full") && cb->count() == 3) resCombo = cb;
+    check(resCombo != nullptr, "M3: playback resolution combo found");
+    if (resCombo) {
+        resCombo->setCurrentIndex(1); // 1/2
+        spin(100);
+        w.seekToFrame(20);
+        for (int i = 0; i < 60 && w.previewImage().isNull(); ++i) spin(50);
+        const QImage half = w.previewImage();
+        check(!half.isNull() && half.width() == base.width() / 2,
+              "M3: 1/2 resolution halves the monitor frame");
+        resCombo->setCurrentIndex(0); // Full
+        spin(100);
+        w.seekToFrame(20);
+        for (int i = 0; i < 60 && w.previewImage().isNull(); ++i) spin(50);
+        check(w.previewImage().size() == base.size(), "M3: Full resolution restored");
+    }
+    bool droppedLabel = false;
+    for (auto *l : w.findChildren<QLabel *>())
+        if (l->text().startsWith(QStringLiteral("Dropped frames"))) droppedLabel = true;
+    check(droppedLabel, "M3: dropped-frames status label present");
 
     if (g_failures == 0) {
         printf("GUISOKE PASS\n");

@@ -232,6 +232,7 @@ void PlaybackEngine::play()
     m_baseSec = pos;
     m_wall.start();
 #endif
+    m_dropped = 0;
     m_tick.start();
     emitFrameForClock(pos);
     emit playStateChanged(true);
@@ -340,6 +341,10 @@ void PlaybackEngine::emitFrameForClock(double sec)
         return;
     }
     const int frame = targetFrame(sec, m_fps);
+    // Dropped-frame accounting: if the clock moved more than one frame past
+    // what we last displayed, the frames in between were never shown.
+    if (m_shownFrame >= 0 && frame > m_shownFrame + 1)
+        m_dropped += frame - m_shownFrame - 1;
     QImage img;
     if (m_video.frameAtSec(sec, &img)) {
         m_shownFrame = frame;

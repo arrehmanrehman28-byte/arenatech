@@ -122,6 +122,29 @@ arriving in M2.
   right-click a marker to remove it.
 - **Delete** — Delete key removes the selected clip (undoable).
 
+## Effects & rendering (M3)
+
+- **Effects editor (Inspector)** — with a clip selected, the Inspector
+  shows an Effects section: Position X/Y (% of canvas), Scale (%),
+  Rotation (°), Opacity (%), Exposure (stops), Contrast, Saturation,
+  Color temperature, Blur (px), Transition (None / Cross dissolve /
+  Fade to black / Wipe / Push) with duration in seconds. **Apply
+  effects** stores the values on the clip as one undoable command
+  (Undo button label: "Set effects"). Leaving everything at defaults
+  produces no effect data, so the fast path stays active.
+- **Live preview** — the program monitor renders through the
+  deterministic compositor as soon as any clip carries effects:
+  transform → color → blur → opacity, with clip-tail transitions
+  blended against the next clip (or black for fade-to-black at the
+  end of the track). Decoded frames are kept in an LRU render cache
+  (512 MB default, `render/cacheMB` setting); the status bar shows the
+  live cache occupancy.
+- **Playback resolution** — the monitor's Full / 1/2 / 1/4 selector
+  scales the displayed preview only (the compositor always works at
+  project resolution); useful for slow machines / long scrubs.
+- **Dropped frames** — the status bar counts frames the decoder could
+  not show on time during playback (reset on each play).
+
 ## Interaction rules
 
 - **Keyboard first**: J/K/L shuttle, I/O in/out (M2), Q/W ripple trim,

@@ -47,6 +47,10 @@ MainWindow::MainWindow(Themer *themer, QWidget *parent)
     connect(m_engine, &PlaybackEngine::ended, this, &MainWindow::onEngineEnded);
     connect(m_engine, &PlaybackEngine::playStateChanged, this, &MainWindow::onPlayStateChanged);
     m_undoStack.onChanged = [this] { noteHistoryChanged(); };
+    // M3: render cache size (MB), default 512.
+    const QVariant cacheMb = m_settings->raw(QStringLiteral("render/cacheMB"));
+    m_frameCache.setMaxBytes(
+        qint64(cacheMb.isValid() ? cacheMb.toInt() : 512) * 1024 * 1024);
     setWindowTitle(QStringLiteral("Arena Edit"));
     setMinimumSize(1100, 680);
     resize(1440, 860);
@@ -246,6 +250,9 @@ void MainWindow::buildCentral()
     m_playbackRes = new QComboBox;
     m_playbackRes->addItems({QStringLiteral("Full"), QStringLiteral("1/2"), QStringLiteral("1/4")});
     m_playbackRes->setToolTip(arenaTr("panel.monitor.playback"));
+    m_playbackRes->setCurrentIndex(0);
+    connect(m_playbackRes, &QComboBox::currentIndexChanged, this,
+            [this](int) { applyPlaybackResolution(); });
     auto *guides = new QCheckBox(arenaTr("panel.monitor.guides"));
     guides->setChecked(true);
     auto *grid = new QCheckBox(arenaTr("panel.monitor.grid"));
@@ -345,6 +352,8 @@ void MainWindow::buildDocks()
             &MainWindow::removeMarkerAt);
 
     m_inspector = new InspectorWidget;
+    connect(m_inspector, &InspectorWidget::effectsEdited, this,
+            &MainWindow::onEffectsEdited);
     auto *inspectorDock = new QDockWidget;
     inspectorDock->setObjectName(QStringLiteral("InspectorDock"));
     inspectorDock->setWidget(m_inspector);
@@ -403,6 +412,7 @@ void MainWindow::buildStatusBar()
     m_fps = make(QStringLiteral("30 fps"));
     m_cache = make(arenaTr("status.cache", {{QStringLiteral("pct"), 0}}));
     m_mem = make(QString());
+    m_dropped = make(arenaTr("status.dropped", {{QStringLiteral("n"), 0}}));
     m_aiBudget = make(arenaTr("panel.ai.quota", {{QStringLiteral("used"), 0}, {QStringLiteral("limit"), 200}}));
     connect(&m_kilo->budget(), &AIBudget::changed, this, [this](int used, int limit) {
         m_aiBudget->setText(arenaTr("panel.ai.quota", {{QStringLiteral("used"), used}, {QStringLiteral("limit"), limit}}));
@@ -806,6 +816,12 @@ void MainWindow::noteHistoryChanged()
 void MainWindow::tickSecond()
 {
     m_mem->setText(arenaTr("status.mem", {{QStringLiteral("size"), formatBytes(processResidentBytes())}}));
+    // M3: live render-cache occupancy.
+    if (m_cache) {
+        const qint64 cap = qMax<qint64>(1, m_frameCache.maxBytes());
+        const int pct = int(m_frameCache.usedBytes() * 100 / cap);
+        m_cache->setText(arenaTr("status.cache", {{QStringLiteral("pct"), pct}}));
+    }
     if (m_autosave->lastSaved().isValid())
         setWindowTitle(currentTitle());
 }
@@ -936,6 +952,39 @@ struct TrimClipsCommand : public Command {
         return arenaTr(roll ? "timeline.rollEdit" : "timeline.trimEdge");
     }
     int retainedBytes() const override { return 256 * (1 + to.size()); }
+};
+
+// Replace the effect JSON on a single clip (undoable).
+struct SetEffectsCommand : public Command {
+    Project *project = nullptr;
+    QString clipId;
+    QJsonObject to;
+    QJsonObject from;
+    SetEffectsCommand(Project *p, QString id, QJsonObject fx)
+        : project(p), clipId(std::move(id)), to(std::move(fx))
+    {
+    }
+    void execute() override
+    {
+        from = QJsonObject();
+        for (Track &tr : project->tracks)
+            for (const Clip &c : tr.clips)
+                if (c.id == clipId) from = c.effects;
+        for (Track &tr : project->tracks)
+            for (Clip &c : tr.clips)
+                if (c.id == clipId) c.effects = to;
+    }
+    void undo() override
+    {
+        for (Track &tr : project->tracks)
+            for (Clip &c : tr.clips)
+                if (c.id == clipId) c.effects = from;
+    }
+    QString actionName() const override { return arenaTr("cmd.setEffects"); }
+    int retainedBytes() const override
+    {
+        return 128 + int(to.size()) + int(from.size());
+    }
 };
 
 // Remove one clip from a track (undoable; re-inserts at the same position).
@@ -1161,7 +1210,7 @@ void MainWindow::selectClipAt(const QString &source, qint64 timelineFrame)
         if (t.type != TrackType::Video) continue;
         for (const Clip &c : t.clips) {
             if (c.sourceRef != source) continue;
-            relSec = double(timelineFrame - c.offset) / m_project->fps;
+            relSec = double(c.in + (timelineFrame - c.offset)) / m_project->fps;
             break;
         }
     }
@@ -1249,6 +1298,7 @@ void MainWindow::refreshTimeline()
         for (const Clip &c : t.clips) {
             if (c.id != m_selectedClip) continue;
             ClipSelection sel;
+            sel.clipId = c.id;
             sel.source = QFileInfo(c.sourceRef).fileName();
             sel.in = c.in;
             sel.out = c.out;
@@ -1256,6 +1306,7 @@ void MainWindow::refreshTimeline()
             sel.fps = m_project->fps;
             sel.hasVideo = true;
             sel.missing = !QFileInfo::exists(c.sourceRef);
+            sel.effects = c.effects;
             m_inspector->setClip(sel);
             return;
         }
@@ -1285,20 +1336,82 @@ void MainWindow::seekToFrame(qint64 frame)
             if (c.sourceRef != m_currentSource) {
                 selectClipAt(c.sourceRef, clamped);
             } else if (m_engine->isOpen()) {
-                m_engine->seekSec(double(clamped - c.offset) / m_project->fps);
+                // Source frame at the playhead includes the in-point.
+                m_engine->seekSec(double(c.in + (clamped - c.offset)) / m_project->fps);
             }
             return;
         }
     }
 }
 
+// M3: playback resolution scaling (monitor display only; the compositor
+// always works at project resolution).
+static QImage scaleForPlayback(const QImage &img, int scale)
+{
+    if (img.isNull() || scale <= 1) return img;
+    return img.scaled(img.width() / scale, img.height() / scale,
+                      Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+}
+
+void MainWindow::applyPlaybackResolution()
+{
+    m_playbackScale = qMax(1, 1 << m_playbackRes->currentIndex()); // Full, Half, Quarter
+    if (!m_project || !m_engine || !m_engine->isOpen()) return;
+    const QImage img = m_engine->frameAtSec(m_engine->positionSec());
+    if (!img.isNull()) m_monitor->setFrame(renderProjectFrame(m_playhead, img));
+}
+
+QImage MainWindow::renderProjectFrame(qint64 frame, const QImage &srcFrame) const
+{
+    if (!m_project || srcFrame.isNull()) return srcFrame;
+    // Fast path: no clip on the project carries effects.
+    bool anyFx = false;
+    for (const Track &t : m_project->tracks) {
+        if (t.type != TrackType::Video) continue;
+        for (const Clip &c : t.clips) {
+            if (!c.effects.isEmpty()) {
+                anyFx = true;
+                break;
+            }
+        }
+        if (anyFx) break;
+    }
+    if (!anyFx) return scaleForPlayback(srcFrame, m_playbackScale);
+
+    // Fetcher: decoded source frames, LRU-cached. The engine's current
+    // source is decoded through the open engine (frame-accurate seek); any
+    // other clip's source (transitions between files) decodes on demand.
+    auto fetch = [this](const QString &source, qint64 f) -> QImage {
+        const QString key = QStringLiteral("src|%1|%2").arg(source).arg(f);
+        QImage cached;
+        if (m_frameCache.get(key, &cached)) return cached;
+        QImage img;
+        const QString playable = playablePathFor(source);
+        if (source == m_currentSource && m_engineSource == playable && m_engine->isOpen()) {
+            img = m_engine->frameAtSec(double(f) / qMax(0.1, m_engine->fps()));
+        } else {
+            VideoDecoder dec;
+            if (dec.open(playable)) {
+                QImage tmp;
+                if (dec.frameAtSec(double(f) / qMax(0.1, dec.fps()), &tmp)) img = tmp;
+            }
+        }
+        if (!img.isNull()) m_frameCache.put(key, img);
+        return img;
+    };
+    return scaleForPlayback(Compositor::renderFrame(*m_project, frame, fetch),
+                            m_playbackScale);
+}
+
 void MainWindow::onEngineFrame(const QImage &img, int)
 {
-    m_monitor->setFrame(img);
+    m_monitor->setFrame(m_project ? renderProjectFrame(m_playhead, img) : img);
 }
 
 void MainWindow::onEnginePosition(double sec)
 {
+    m_dropped->setText(arenaTr("status.dropped", {{QStringLiteral("n"),
+                                                   m_engine->droppedFrames()}}));
     if (!m_project || !m_engine->isPlaying()) return;
     for (const Track &t : m_project->tracks) {
         if (t.type != TrackType::Video) continue;
@@ -1318,9 +1431,11 @@ void MainWindow::onEngineEnded()
     updateTransportButtons();
 }
 
-void MainWindow::onPlayStateChanged(bool)
+void MainWindow::onPlayStateChanged(bool playing)
 {
     updateTransportButtons();
+    if (!playing)
+        m_dropped->setText(arenaTr("status.dropped", {{QStringLiteral("n"), 0}}));
 }
 
 void MainWindow::togglePlayback()
@@ -1422,6 +1537,13 @@ void MainWindow::onTrimRequested(const QList<ClipPatch> &patches)
     if (!m_project || patches.isEmpty()) return;
     const bool roll = patches.size() > 1;
     commitCommand(std::make_unique<TrimClipsCommand>(m_project.get(), patches, roll));
+}
+
+// M3: effects editor (Inspector) -> undoable command.
+void MainWindow::onEffectsEdited(const QString &clipId, const QJsonObject &fx)
+{
+    if (!m_project || clipId.isEmpty()) return;
+    commitCommand(std::make_unique<SetEffectsCommand>(m_project.get(), clipId, fx));
 }
 
 void MainWindow::rippleTrim(bool rightSide)

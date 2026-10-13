@@ -9,6 +9,8 @@
 #include <QVector>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QDoubleSpinBox>
+#include <QJsonObject>
 #include <QPushButton>
 #include <QFormLayout>
 
@@ -103,13 +105,15 @@ private:
 
 // Summary of the clip currently selected on the timeline (for the Inspector).
 struct ClipSelection {
-    QString source;  // file name
+    QString clipId;       // project clip id (M3: effects editor)
+    QString source;       // file name
     bool hasVideo = false;
     bool missing = false;
     qint64 in = 0;
     qint64 out = 0;
     qint64 offset = 0;
     double fps = 30.0;
+    QJsonObject effects;  // M3: current clip effects
 };
 
 class InspectorWidget : public QWidget {
@@ -121,8 +125,13 @@ public:
     void setClip(const ClipSelection &clip);
     void clearSelection();
 
+signals:
+    // M3: the user applied the effects editor (values -> effect JSON).
+    void effectsEdited(const QString &clipId, const QJsonObject &fx);
+
 private:
     QFormLayout *m_form;
+    QString m_clipId;
     QLabel *m_emptyTitle;
     QLabel *m_emptyBody;
     QWidget *m_empty;
