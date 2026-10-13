@@ -153,6 +153,90 @@ int main(int argc, char **argv)
     }
     check(w.selectedClipId().isEmpty(), "empty-space click deselects");
 
+    // --- M2.3: Q/W ripple trims, edge drag, roll edit -----------------------
+    // State: one clip, in=0 out=60 offset=0 (60-frame source @ 30 fps).
+    auto clip1 = [&]() -> const Clip * {
+        for (Track &t : proj->tracks)
+            if (t.type == TrackType::Video && !t.clips.isEmpty())
+                return &t.clips.first();
+        return nullptr;
+    };
+    // Drags must happen in the clip lane (y >= ruler height).
+    auto pressAt = [&](int x) {
+        QMouseEvent ev(QEvent::MouseButtonPress, QPointF(x, 40), QPointF(x, 40),
+                       Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(canvas, &ev);
+    };
+    auto moveAt = [&](int x) {
+        QMouseEvent ev(QEvent::MouseMove, QPointF(x, 40), QPointF(x, 40),
+                       Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(canvas, &ev);
+    };
+    auto releaseAt = [&](int x) {
+        QMouseEvent ev(QEvent::MouseButtonRelease, QPointF(x, 40), QPointF(x, 40),
+                       Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(canvas, &ev);
+    };
+    auto key = [&](int keycode) {
+        QKeyEvent ev(QEvent::KeyPress, keycode, Qt::NoModifier);
+        QApplication::sendEvent(&w, &ev);
+    };
+
+    // W @ frame 10: in point -> 10.
+    w.seekToFrame(10);
+    key(Qt::Key_W);
+    spin(50);
+    check(clip1() && clip1()->in == 10 && clip1()->out == 60 &&
+              clip1()->offset == 0,
+          "W trims start to playhead");
+
+    // Q @ frame 30: out point -> 30.
+    w.seekToFrame(30);
+    key(Qt::Key_Q);
+    spin(50);
+    // out = in + (playhead - offset) = 10 + 30 = 40 (source frame).
+    check(clip1() && clip1()->in == 10 && clip1()->out == 40 &&
+              clip1()->offset == 0,
+          "Q trims end to playhead");
+
+    // Second clip appended after the first (offset 30).
+    w.addClipToTimeline(media);
+    spin(200); // let the (already known) probe path complete
+    Track *v1b = nullptr;
+    for (Track &t : proj->tracks)
+        if (t.type == TrackType::Video) {
+            v1b = &t;
+            break;
+        }
+    check(v1b->clips.size() == 2 && v1b->clips[1].offset == 30 &&
+              v1b->clips[1].in == 0 && v1b->clips[1].out == 60,
+          "second clip appended at end");
+
+    // Q @ frame 80: trim second clip's end (source out = 80 - 30 = 50).
+    w.seekToFrame(80);
+    key(Qt::Key_Q);
+    spin(50);
+    check(v1b->clips[1].out == 50 && v1b->clips[1].in == 0,
+          "Q trims second clip end");
+
+    // Roll: drag the shared boundary (frame 30 -> x 71) 2 px right (+4 frames).
+    const int xb = 56 + 30 / 2;
+    pressAt(xb);
+    moveAt(xb + 2);
+    releaseAt(xb + 2);
+    spin(50);
+    check(v1b->clips[0].out == 44 && v1b->clips[0].in == 10 &&
+              v1b->clips[1].in == 4 && v1b->clips[1].offset == 34 &&
+              v1b->clips[1].out == 54,
+          "roll moves boundary, preserving both durations' sum");
+
+    // Undo all five edits (W, Q, add, Q, roll) -> original single full clip.
+    for (int i = 0; i < 5; ++i) w.undo();
+    spin(100);
+    check(v1b->clips.size() == 1 && v1b->clips[0].in == 0 &&
+              v1b->clips[0].out == 60 && v1b->clips[0].offset == 0,
+          "undo x5 restores original clip");
+
     if (g_failures == 0) {
         printf("GUISOKE PASS\n");
         return 0;

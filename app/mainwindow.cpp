@@ -339,6 +339,7 @@ void MainWindow::buildDocks()
         m_selectedClip.clear();
         refreshTimeline();
     });
+    connect(m_timeline, &TimelineWidget::trimRequested, this, &MainWindow::onTrimRequested);
 
     m_inspector = new InspectorWidget;
     auto *inspectorDock = new QDockWidget;
@@ -839,6 +840,53 @@ struct AddClipCommand : public Command {
     int retainedBytes() const override { return 384; }
 };
 
+// Apply one or two clip geometry patches (trim / roll; undoable).
+struct TrimClipsCommand : public Command {
+    Project *project = nullptr;
+    QList<ClipPatch> to;
+    QList<ClipPatch> from;
+    bool roll = false;
+    TrimClipsCommand(Project *p, const QList<ClipPatch> &patches, bool isRoll)
+        : project(p), to(patches), roll(isRoll)
+    {
+    }
+    void applyList(const QList<ClipPatch> &list)
+    {
+        for (const ClipPatch &t : list) {
+            for (Track &tr : project->tracks)
+                for (Clip &c : tr.clips)
+                    if (c.id == t.clipId) {
+                        c.offset = t.offset;
+                        c.in = t.in;
+                        c.out = t.out;
+                    }
+        }
+    }
+    void execute() override
+    {
+        from.clear();
+        for (const ClipPatch &t : to) {
+            ClipPatch f;
+            f.clipId = t.clipId;
+            for (Track &tr : project->tracks)
+                for (const Clip &c : tr.clips)
+                    if (c.id == t.clipId) {
+                        f.offset = c.offset;
+                        f.in = c.in;
+                        f.out = c.out;
+                    }
+            from.append(f);
+        }
+        applyList(to);
+    }
+    void undo() override { applyList(from); }
+    QString actionName() const override
+    {
+        return arenaTr(roll ? "timeline.rollEdit" : "timeline.trimEdge");
+    }
+    int retainedBytes() const override { return 256 * (1 + to.size()); }
+};
+
 // Remove one clip from a track (undoable; re-inserts at the same position).
 struct DeleteClipCommand : public Command {
     Track *track = nullptr;
@@ -1128,6 +1176,11 @@ void MainWindow::refreshTimeline()
             v.clipId = c.id;
             v.offsetFrames = c.offset;
             v.durationFrames = c.duration();
+            v.inFrames = c.in;
+            const MediaInfo mi = m_mediaInfo.value(c.sourceRef);
+            if (mi.durationMs > 0)
+                v.sourceDurationFrames =
+                    qMax<qint64>(1, qRound(mi.durationMs / 1000.0 * m_project->fps));
             v.selected = (c.id == m_selectedClip);
             v.missing = !QFileInfo::exists(c.sourceRef);
             if (m_wavePeaks.contains(c.sourceRef)) v.waveform = m_wavePeaks.value(c.sourceRef);
@@ -1281,7 +1334,76 @@ void MainWindow::keyPressEvent(QKeyEvent *e)
         e->accept();
         return;
     }
+    if (e->key() == Qt::Key_W || e->key() == Qt::Key_Q) {
+        rippleTrim(e->key() == Qt::Key_W);
+        e->accept();
+        return;
+    }
     QWidget::keyPressEvent(e);
+}
+
+void MainWindow::onTrimRequested(const QList<ClipPatch> &patches)
+{
+    if (!m_project || patches.isEmpty()) return;
+    const bool roll = patches.size() > 1;
+    commitCommand(std::make_unique<TrimClipsCommand>(m_project.get(), patches, roll));
+}
+
+void MainWindow::rippleTrim(bool rightSide)
+{
+    if (!m_project) return;
+    Track *track = nullptr;
+    for (Track &t : m_project->tracks)
+        if (t.type == TrackType::Video) {
+            track = &t;
+            break;
+        }
+    if (!track || track->clips.isEmpty()) return;
+    const qint64 f = m_playhead;
+    for (int i = 0; i < track->clips.size(); ++i) {
+        Clip &c = track->clips[i];
+        const qint64 end = c.offset + c.duration();
+        if (f < c.offset || f >= end) continue; // playhead must be inside
+        QList<ClipPatch> patches;
+        ClipPatch p;
+        p.clipId = c.id;
+        p.offset = c.offset;
+        if (rightSide) {
+            // W: trim the start to the playhead; later clips shift right.
+            if (f <= c.offset) return;
+            const qint64 grow = f - c.offset;
+            p.in = c.in + grow;
+            p.out = c.out;
+            for (int j = i + 1; j < track->clips.size(); ++j) {
+                Clip &n = track->clips[j];
+                ClipPatch np;
+                np.clipId = n.id;
+                np.offset = n.offset + grow;
+                np.in = n.in;
+                np.out = n.out;
+                patches.append(np);
+            }
+        } else {
+            // Q: trim the end to the playhead; later clips shift left.
+            if (f >= end) return;
+            const qint64 shrink = end - f;
+            p.in = c.in;
+            p.out = c.in + (f - c.offset); // source frame at the playhead
+            for (int j = i + 1; j < track->clips.size(); ++j) {
+                Clip &n = track->clips[j];
+                ClipPatch np;
+                np.clipId = n.id;
+                np.offset = n.offset - shrink;
+                np.in = n.in;
+                np.out = n.out;
+                patches.append(np);
+            }
+        }
+        patches.prepend(p);
+        m_selectedClip = c.id;
+        commitCommand(std::make_unique<TrimClipsCommand>(m_project.get(), patches, false));
+        return;
+    }
 }
 
 void MainWindow::deleteSelectedClip()

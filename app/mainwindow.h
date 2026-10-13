@@ -11,6 +11,7 @@
 #include "commandpalette.h"
 #include "media.h"
 #include "project.h"
+#include "timeline.h"
 
 class QAction;
 class QActionGroup;
@@ -106,6 +107,8 @@ private:
     QString playablePathFor(const QString &path) const;
     void selectClipAt(const QString &source, qint64 timelineFrame);
     void deleteSelectedClip();
+    void onTrimRequested(const QList<ClipPatch> &patches);
+    void rippleTrim(bool rightSide); // Q / W at the playhead
     void refreshTimeline();
     void generateWaveformThumbs(const QString &path);
     void onEngineFrame(const QImage &img, int frame);

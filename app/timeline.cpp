@@ -56,39 +56,275 @@ qint64 TimelineCanvas::frameAtX(double x) const
     return qMax<qint64>(0, qint64(std::lround((x - headerW) * framesPerPx())));
 }
 
+
+double TimelineCanvas::xToFrame(double x) const
+{
+    const double fpp = framesPerPx();
+    if (fpp <= 0.0) return 0;
+    return (x - 56.0) * fpp;
+}
+
+int TimelineCanvas::edgeAt(double x, int y, int *edge) const
+{
+    if (m_trackIds.isEmpty()) return -1;
+    const int rulerH = 24;
+    const int laneH = qMax(40, (height() - rulerH) / qMax(1, m_trackIds.size()));
+    const int laneTop = rulerH; // clips live on the first (video) lane
+    if (y < laneTop || y >= laneTop + laneH) {
+        *edge = -1;
+        return -1;
+    }
+    // Nearest edge within tolerance wins.
+    int best = -1;
+    double bestDist = kEdgeTol + 0.5;
+    for (int i = 0; i < m_clips.size(); ++i) {
+        const ClipView &c = m_clips[i];
+        const double lx = 56.0 + double(c.offsetFrames) / framesPerPx();
+        const double rx = 56.0 + double(c.offsetFrames + c.durationFrames) / framesPerPx();
+        const double dl = std::abs(x - lx);
+        const double dr = std::abs(x - rx);
+        // Must be horizontally inside the clip's span (tolerance either side).
+        if (x < lx - kEdgeTol || x > rx + kEdgeTol) continue;
+        if (dl <= dr) {
+            if (dl < bestDist) {
+                bestDist = dl;
+                best = i;
+                *edge = 0;
+            }
+        } else {
+            if (dr < bestDist) {
+                bestDist = dr;
+                best = i;
+                *edge = 1;
+            }
+        }
+    }
+    return best;
+}
+
+void TimelineCanvas::applyPreview(double x)
+{
+    if (m_drag == DragMode::None || m_dragClip < 0) return;
+    const ClipView &c = m_clips.value(m_dragClip);
+    if (c.clipId.isEmpty()) return;
+    qint64 delta = qint64(std::lround(xToFrame(x) - xToFrame(m_pressX)));
+
+    // Snap: the moving edge is pulled to the nearest clip edge or the
+    // playhead within 4 px (spec M2: snap with visible feedback).
+    if (m_snapEnabled) {
+        const qint64 base = m_dragEdge == 0 ? m_oOffset
+                                            : m_oOffset + (m_oOut - m_oIn);
+        const double fpp = framesPerPx();
+        qint64 best = -1;
+        double bestDist = 4.0; // px
+        auto consider = [&](qint64 target) {
+            const double d = (double(target) - double(base)) * fpp -
+                             (double(delta) * fpp);
+            if (std::abs(d) < bestDist) {
+                bestDist = std::abs(d);
+                best = target - base;
+            }
+        };
+        for (int i = 0; i < m_clips.size(); ++i) {
+            if (i == m_dragClip || (m_drag == DragMode::Roll && i == m_rollClip))
+                continue;
+            consider(m_clips[i].offsetFrames);
+            consider(m_clips[i].offsetFrames + m_clips[i].durationFrames);
+        }
+        consider(m_playhead);
+        if (best != -1) {
+            delta = best;
+            m_snapLine = base + best;
+            emit snapLineChanged(m_snapLine, true);
+        } else if (m_snapLine >= 0) {
+            emit snapLineChanged(m_snapLine, false);
+            m_snapLine = -1;
+        }
+    }
+
+    if (m_drag == DragMode::Trim) {
+        if (m_dragEdge == 1) {
+            // Right edge: change out (source), offset/in fixed.
+            qint64 dur = m_oOut - m_oIn + delta;
+            const qint64 maxDur = c.sourceDurationFrames > m_oIn
+                                       ? c.sourceDurationFrames - m_oIn
+                                       : m_oOut - m_oIn;
+            if (dur > maxDur) dur = maxDur;
+            if (dur < kMinDur) dur = kMinDur;
+            m_pOffset = m_oOffset;
+            m_pIn = m_oIn;
+            m_pOut = m_oIn + dur;
+        } else {
+            // Left edge: change in (source) and offset together.
+            qint64 in = m_oIn + delta;
+            if (in < m_oIn - m_oOffset) in = m_oIn - m_oOffset; // offset >= 0
+            if (in < 0) in = 0;
+            qint64 dur = m_oOut - in;
+            if (dur < kMinDur) {
+                in = m_oOut - kMinDur;
+                dur = kMinDur;
+            }
+            m_pOffset = m_oOffset + (in - m_oIn);
+            m_pIn = in;
+            m_pOut = m_oOut;
+        }
+    } else {
+        // Roll: shared boundary moves; left clip out and right clip in/offset.
+        qint64 d = delta;
+        // Left clip keeps its duration >= 1; right clip keeps in >= 0.
+        qint64 lo = kMinDur - (m_oOut - m_oIn);
+        if (lo < -m_rollOIn) lo = -m_rollOIn;
+        // Right clip keeps its duration >= 1.
+        qint64 hi = (m_rollOOut - m_rollOIn) - kMinDur;
+        // Source limits (when known).
+        if (c.sourceDurationFrames > m_oOut) {
+            const qint64 cap = c.sourceDurationFrames - m_oOut;
+            if (hi > cap) hi = cap;
+        }
+        const ClipView &rn = m_clips.value(m_rollClip);
+        if (rn.sourceDurationFrames > m_rollOOut) {
+            const qint64 cap = rn.sourceDurationFrames - m_rollOOut;
+            if (hi > cap) hi = cap;
+        }
+        d = qBound(lo, d, hi);
+        m_pOffset = m_oOffset;
+        m_pIn = m_oIn;
+        m_pOut = m_oOut + d;
+        m_pRollOffset = m_rollOOffset + d;
+        m_pRollIn = m_rollOIn + d;
+        m_pRollOut = m_rollOOut + d;
+    }
+    m_previewActive = true;
+    m_moved = (m_pOffset != m_oOffset) || (m_pIn != m_oIn) || (m_pOut != m_oOut);
+}
+
+QList<ClipPatch> TimelineCanvas::buildPatches() const
+{
+    QList<ClipPatch> out;
+    if (!m_previewActive) return out;
+    ClipPatch a;
+    a.clipId = m_clips.value(m_dragClip).clipId;
+    a.offset = m_pOffset;
+    a.in = m_pIn;
+    a.out = m_pOut;
+    out.append(a);
+    if (m_drag == DragMode::Roll && m_rollClip >= 0) {
+        ClipPatch b;
+        b.clipId = m_clips.value(m_rollClip).clipId;
+        b.offset = m_pRollOffset;
+        b.in = m_pRollIn;
+        b.out = m_pRollOut;
+        out.append(b);
+    }
+    return out;
+}
+
 void TimelineCanvas::mousePressEvent(QMouseEvent *e)
 {
     if (!m_hasProject) {
         QWidget::mousePressEvent(e);
         return;
     }
-    if (e->button() == Qt::LeftButton && e->position().x() > 56) {
-        m_scrubbing = true;
-        // Clip in the video track under the cursor gets the selection;
-        // empty space deselects.
-        const qint64 f = frameAtX(e->position().x());
-        bool overClip = false;
-        for (const ClipView &c : m_clips)
-            if (f >= c.offsetFrames && f < c.offsetFrames + c.durationFrames) {
-                emit clipClicked(c.offsetFrames);
-                overClip = true;
-                break;
+    if (e->button() != Qt::LeftButton || e->position().x() <= 56) {
+        QWidget::mousePressEvent(e);
+        return;
+    }
+    // Edge grab starts a trim (or roll on a shared boundary).
+    int edge = -1;
+    int hit = edgeAt(e->position().x(), e->position().y(), &edge);
+    if (hit >= 0 && edge >= 0) {
+        m_drag = DragMode::Trim;
+        m_dragClip = hit;
+        m_dragEdge = edge;
+        m_rollClip = -1;
+        m_pressX = int(e->position().x());
+        // A shared boundary (right edge of N == left edge of N+1) is a roll:
+        // it can be grabbed from either side.
+        if (edge == 0 && hit > 0 &&
+            m_clips[hit - 1].offsetFrames + m_clips[hit - 1].durationFrames ==
+                m_clips[hit].offsetFrames) {
+            hit = hit - 1;
+            edge = 1;
+        }
+        const ClipView &c = m_clips[hit];
+        m_oOffset = c.offsetFrames;
+        m_oIn = c.inFrames;
+        m_oOut = c.inFrames + c.durationFrames;
+        if (edge == 1 && hit + 1 < m_clips.size()) {
+            const ClipView &n = m_clips[hit + 1];
+            if (n.offsetFrames == c.offsetFrames + c.durationFrames) {
+                m_drag = DragMode::Roll;
+                m_rollClip = hit + 1;
+                m_rollOOffset = n.offsetFrames;
+                m_rollOIn = n.inFrames;
+                m_rollOOut = n.inFrames + n.durationFrames;
             }
-        if (!overClip) emit clipDeselected();
-        emit seekRequested(f);
+        }
+        m_previewActive = false;
+        m_moved = false;
+        m_snapLine = -1;
+        setCursor(Qt::SplitHCursor);
         e->accept();
         return;
     }
-    QWidget::mousePressEvent(e);
+    m_scrubbing = true;
+    // Clip in the video track under the cursor gets the selection;
+    // empty space deselects.
+    const qint64 f = frameAtX(e->position().x());
+    bool overClip = false;
+    for (const ClipView &c : m_clips)
+        if (f >= c.offsetFrames && f < c.offsetFrames + c.durationFrames) {
+            emit clipClicked(c.offsetFrames);
+            overClip = true;
+            break;
+        }
+    if (!overClip) emit clipDeselected();
+    emit seekRequested(f);
+    e->accept();
+}
+
+void TimelineCanvas::mouseReleaseEvent(QMouseEvent *e)
+{
+    if (m_drag != DragMode::None) {
+        // Capture the patches before resetting the drag state.
+        const QList<ClipPatch> patches = m_moved ? buildPatches() : QList<ClipPatch>();
+        m_drag = DragMode::None;
+        m_previewActive = false;
+        setCursor(Qt::ArrowCursor);
+        if (m_snapLine >= 0) emit snapLineChanged(m_snapLine, false);
+        m_snapLine = -1;
+        if (!patches.isEmpty()) emit trimRequested(patches);
+        e->accept();
+        return;
+    }
+    if (m_scrubbing) {
+        m_scrubbing = false;
+        e->accept();
+        return;
+    }
+    QWidget::mouseReleaseEvent(e);
 }
 
 void TimelineCanvas::mouseMoveEvent(QMouseEvent *e)
 {
+    if (m_drag != DragMode::None && (e->buttons() & Qt::LeftButton)) {
+        applyPreview(e->position().x());
+        update();
+        e->accept();
+        return;
+    }
     if (m_scrubbing && (e->buttons() & Qt::LeftButton)) {
         emit seekRequested(frameAtX(e->position().x()));
         e->accept();
         return;
     }
+    // Hover: show the split cursor over a clip edge.
+    int edge = -1;
+    const int hit = edgeAt(e->position().x(), e->position().y(), &edge);
+    if (hit >= 0 && edge >= 0)
+        setCursor(Qt::SplitHCursor);
+    else
+        setCursor(Qt::ArrowCursor);
     QWidget::mouseMoveEvent(e);
 }
 
@@ -156,7 +392,18 @@ void TimelineCanvas::paintEvent(QPaintEvent *)
     // Clips (video track) — waveform texture, selection, missing-media badge.
     if (!m_clips.isEmpty() && !m_trackIds.isEmpty()) {
         const int laneY = rulerH;
-        for (const ClipView &c : m_clips) {
+        for (int ci = 0; ci < m_clips.size(); ++ci) {
+            ClipView c = m_clips[ci];
+            // Live preview geometry while trimming/rolling.
+            if (m_previewActive) {
+                if (ci == m_dragClip) {
+                    c.offsetFrames = m_pOffset;
+                    c.durationFrames = m_pOut - m_pIn;
+                } else if (m_drag == DragMode::Roll && ci == m_rollClip) {
+                    c.offsetFrames = m_pRollOffset;
+                    c.durationFrames = m_pRollOut - m_pRollIn;
+                }
+            }
             const double x0 = headerW + double(c.offsetFrames) / fpp;
             const double w = double(c.durationFrames) / fpp;
             if (x0 + w < headerW || x0 > width()) continue;
@@ -198,6 +445,15 @@ void TimelineCanvas::paintEvent(QPaintEvent *)
             QPolygonF tri;
             tri << QPointF(x - 5, 0) << QPointF(x + 5, 0) << QPointF(x, 8);
             p.drawPolygon(tri);
+        }
+    }
+
+    // Snap feedback: violet line while a trim edge is snapped (M2).
+    if (m_snapLine >= 0) {
+        const double sx = headerW + double(m_snapLine) / fpp;
+        if (sx > 0 && sx < width()) {
+            p.setPen(QPen(QColor(0x9B, 0x6D, 0xFF), 1.4));
+            p.drawLine(QPointF(sx, rulerH), QPointF(sx, height()));
         }
     }
 }
@@ -250,6 +506,9 @@ TimelineWidget::TimelineWidget(QWidget *parent) : QWidget(parent)
     m_canvas = new TimelineCanvas;
     lay->addWidget(m_canvas, 1);
 
+    // Snap toggle drives the canvas's edge snapping.
+    connect(m_snap, &QToolButton::toggled, m_canvas, &TimelineCanvas::setSnapEnabled);
+
     connect(m_zoomIn, &QToolButton::clicked, this, [this] {
         m_canvas->setZoom(m_canvas->zoom() * 1.25);
         emit zoomChanged(m_canvas->zoom());
@@ -259,10 +518,12 @@ TimelineWidget::TimelineWidget(QWidget *parent) : QWidget(parent)
         emit zoomChanged(m_canvas->zoom());
     });
 
-    // Forward canvas interaction (scrub, select, deselect).
+    // Forward canvas interaction (scrub, select, deselect, trim, snap).
     connect(m_canvas, &TimelineCanvas::seekRequested, this, &TimelineWidget::seekRequested);
     connect(m_canvas, &TimelineCanvas::clipClicked, this, &TimelineWidget::clipClicked);
     connect(m_canvas, &TimelineCanvas::clipDeselected, this, &TimelineWidget::clipDeselected);
+    connect(m_canvas, &TimelineCanvas::trimRequested, this, &TimelineWidget::trimRequested);
+    connect(m_canvas, &TimelineCanvas::snapLineChanged, this, &TimelineWidget::snapLineChanged);
 }
 
 void TimelineWidget::retranslateUi()
