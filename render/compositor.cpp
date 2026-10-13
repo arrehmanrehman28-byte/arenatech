@@ -1,12 +1,16 @@
 // Compositor: deterministic software render pipeline + LRU frame cache.
 #include "compositor.h"
 
+#include "subtitles.h"
+
 #include <QByteArray>
 #include <QCryptographicHash>
+#include <QFont>
 #include <QJsonDocument>
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPainter>
+#include <QTextLayout>
 #include <QtMath>
 
 #include <algorithm>
@@ -19,6 +23,82 @@ bool Compositor::isAvailable() { return true; }
 // The GPU path (D3D11 on Windows, OpenGL optional) lands with the M9
 // Windows packaging work; the contract stays identical.
 bool Compositor::isGpuAvailable() { return false; }
+
+// ---------------------------------------------------------------------------
+// Subtitle burn-in (M5.2)
+// ---------------------------------------------------------------------------
+
+namespace {
+QMutex g_subtitleFontMutex;
+QString g_subtitleFont = QStringLiteral("Arial");
+} // namespace
+
+void Compositor::setDefaultSubtitleFont(const QString &family)
+{
+    const QString f = family.trimmed();
+    QMutexLocker lock(&g_subtitleFontMutex);
+    if (!f.isEmpty()) g_subtitleFont = f;
+}
+
+QString Compositor::defaultSubtitleFont()
+{
+    QMutexLocker lock(&g_subtitleFontMutex);
+    return g_subtitleFont;
+}
+
+// Draw every active cue of every burn-in subtitle track onto the canvas
+// (bottom-center, white with a black outline, RTL-aware). Runs after the
+// video tracks so subtitles are always on top. Deterministic: fixed font
+// family/size relative to the canvas, so golden frames are exact.
+static void drawBakedSubtitles(QPainter &p, const QImage &canvas,
+                               const Project &project, qint64 frame)
+{
+    if (project.subtitleTracks.isEmpty()) return;
+    const int w = canvas.width();
+    const int h = canvas.height();
+    const int fontPx = qMax(12, h / 24);
+    const int outlinePx = qMax(1, fontPx / 16);
+    const int marginY = qMax(8, h / 30);
+    const int maxTextWidth = qMax(10, w - 2 * (w / 40));
+
+    // Draw top track first so the LAST enabled track ends on top.
+    for (int ti = project.subtitleTracks.size() - 1; ti >= 0; --ti) {
+        const SubtitleTrack &st = project.subtitleTracks.at(ti);
+        if (!st.burnIn) continue;
+        for (const TimelineCue &cue : st.cues) {
+            if (frame < cue.startFrame || frame >= cue.endFrame) continue;
+            const QString text = cue.text.trimmed();
+            if (text.isEmpty()) continue;
+
+            QFont font(Compositor::defaultSubtitleFont());
+            font.setPixelSize(fontPx);
+            font.setBold(true);
+
+            // Direction is resolved by QTextLayout's built-in bidi
+            // algorithm (first strong character), so nothing extra is
+            // needed here; isRtlLanguage()/textIsRtl() remain available to
+            // the UI (panel alignment, editing hints).
+            QTextLayout layout(text, font);
+            layout.beginLayout();
+            while (true) {
+                QTextLine line = layout.createLine();
+                if (!line.isValid()) break;
+                line.setLineWidth(maxTextWidth);
+            }
+            layout.endLayout();
+            const QRectF bounds = layout.boundingRect();
+            const double x = (w - bounds.width()) / 2.0;
+            const double y = h - marginY - bounds.height();
+
+            // Two passes: black outline, then white fill.
+            p.setPen(QPen(Qt::black, 2 * outlinePx, Qt::SolidLine, Qt::RoundCap,
+                          Qt::RoundJoin));
+            layout.draw(&p, QPointF(x, y));
+            p.setPen(QPen(Qt::white, 0));
+            layout.draw(&p, QPointF(x, y));
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Deterministic helpers
@@ -379,6 +459,8 @@ QImage Compositor::renderFrame(const Project &project, qint64 frame,
             if (!layer.isNull()) p.drawImage(0, 0, layer);
         }
     }
+    // M5.2: burn in enabled subtitle tracks (on top of all video).
+    drawBakedSubtitles(p, canvas, project, frame);
     return canvas;
 }
 

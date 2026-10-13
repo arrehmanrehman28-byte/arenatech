@@ -45,9 +45,17 @@ public:
     static bool isAvailable();   // software core — always true
     static bool isGpuAvailable();// D3D11/OpenGL — false in this build
 
-    // Render one timeline frame for all video tracks (bottom -> top).
-    // Returns an ARGB32 image of the project canvas size (transparent
-    // where no clip covers the frame).
+    // Family used to burn in subtitle tracks (project.subtitleTracks with
+    // burnIn == true). "Arial" by default — Windows ships an Arabic subset
+    // in Arial; apps/tests may override with any installed family.
+    // Process-wide, thread-safe.
+    static void setDefaultSubtitleFont(const QString &family);
+    static QString defaultSubtitleFont();
+
+    // Render one timeline frame for all video tracks (bottom -> top), then
+    // burn in every enabled subtitle track (last track on top). Returns an
+    // ARGB32 image of the project canvas size (transparent where no clip
+    // covers the frame).
     static QImage renderFrame(const Project &project, qint64 frame,
                               const FrameFetcher &fetch);
 

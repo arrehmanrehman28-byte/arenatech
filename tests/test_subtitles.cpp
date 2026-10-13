@@ -3,6 +3,7 @@
 // speed thresholds, RTL detection, and project JSON round-trip with cues.
 #include <gtest/gtest.h>
 
+#include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 
@@ -272,4 +273,178 @@ TEST(ProjectModel, SubtitleTrackRoundTripWithCues)
     ASSERT_EQ(r.subtitleTracks.size(), 1);
     EXPECT_FALSE(r.subtitleTracks.first().burnIn);
     EXPECT_TRUE(r.subtitleTracks.first().cues.isEmpty());
+}
+
+// --- M5.2: compositor burn-in + Urdu/Arabic golden frames ---------------------
+//
+// Burn-in runs inside Compositor::renderFrame (project.subtitleTracks with
+// burnIn == true), white-on-black-outline, bottom-center, RTL handled by
+// QTextLayout's bidi algorithm. Font is Noto Sans Arabic (variable font,
+// fixture) so the goldens are deterministic in this environment; on Windows
+// the default is Arial (ships an Arabic subset).
+
+#include "compositor.h"
+
+#include <QFontDatabase>
+#include <QGuiApplication>
+#include <QStandardPaths>
+#include <QTextStream>
+
+namespace {
+
+// 640x360 canvas, one flat synthetic source, one cue spanning frames
+// 20..70. Frame 45 lands mid-cue.
+QImage renderBurnInFrame(const QString &lang, const QString &text, bool burnIn,
+                         qint64 frame = 45)
+{
+    Project p;
+    p.width = 640;
+    p.height = 360;
+    p.fps = 30.0;
+    Track t;
+    t.id = QStringLiteral("V1");
+    t.type = TrackType::Video;
+    t.name = QStringLiteral("V1");
+    Clip c;
+    c.id = QStringLiteral("c1");
+    c.sourceRef = QStringLiteral("burnin-src");
+    c.in = 0;
+    c.out = 90;
+    c.offset = 0;
+    t.clips.append(c);
+    p.tracks.append(t);
+
+    SubtitleTrack st;
+    st.id = QStringLiteral("sub1");
+    st.language = lang;
+    st.burnIn = burnIn;
+    TimelineCue cue;
+    cue.startFrame = 20;
+    cue.endFrame = 70;
+    cue.text = text;
+    st.cues.append(cue);
+    p.subtitleTracks.append(st);
+
+    auto fetch = [](const QString &, qint64) -> QImage {
+        QImage img(640, 360, QImage::Format_RGB32);
+        img.fill(qRgb(38, 52, 82));
+        return img;
+    };
+    return Compositor::renderFrame(p, frame, fetch);
+}
+
+void compareGolden(const QImage &out, const QString &name)
+{
+    const QString path = QStringLiteral(ARENA_TEST_FIXTURES) + "/" + name;
+    if (qEnvironmentVariableIsSet("ARENA_GOLDEN_UPDATE")) {
+        ASSERT_TRUE(out.save(path));
+        GTEST_SKIP() << "golden written: " << name.toUtf8().constData();
+    }
+    QImage g;
+    ASSERT_TRUE(g.load(path)) << "missing golden: " << path.toUtf8().constData();
+    ASSERT_EQ(g.size(), out.size());
+    int diffs = 0;
+    for (int y = 0; y < out.height() && diffs < 5; ++y)
+        for (int x = 0; x < out.width() && diffs < 5; ++x)
+            if (g.pixel(x, y) != out.pixel(x, y)) ++diffs;
+    EXPECT_EQ(diffs, 0) << path.toUtf8().constData();
+}
+
+int countDiffPixels(const QImage &a, const QImage &b, int cap = 3)
+{
+    int n = 0;
+    for (int y = 0; y < a.height() && n < cap; ++y)
+        for (int x = 0; x < a.width() && n < cap; ++x)
+            if (a.pixel(x, y) != b.pixel(x, y)) ++n;
+    return n;
+}
+
+} // namespace
+
+class BurnIn : public ::testing::Test
+{
+protected:
+    static void SetUpTestSuite()
+    {
+        // Arabic/Urdu glyphs need a font with those scripts. The sandbox has
+        // no Arabic system font, so point fontconfig at the bundled Noto
+        // Sans Arabic fixture via a workspace-local config (no install).
+        // FONTCONFIG_FILE must be set before the first font query.
+        const QString fontDir = QStringLiteral(ARENA_TEST_FIXTURES) + "/fonts";
+        const QString conf = QDir::tempPath() + QStringLiteral("/arena_burnin_fonts.conf");
+        {
+            QFile f(conf);
+            if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                QTextStream ts(&f);
+                ts << QStringLiteral("<?xml version=\"1.0\"?>\n")
+                   << QStringLiteral("<fontconfig>\n")
+                   << QStringLiteral(
+                          "  <include ignore_missing=\"yes\">/etc/fonts/fonts.conf"
+                          "</include>\n")
+                   << "  <dir>" + QString::fromUtf8(fontDir.toUtf8()) + "</dir>\n"
+                   << QStringLiteral("</fontconfig>\n");
+            }
+        }
+        qputenv("FONTCONFIG_FILE", conf.toUtf8());
+
+        // Font rendering needs a Qt GUI app; headless offscreen platform.
+        if (QGuiApplication::instance() == nullptr) {
+            qputenv("QT_QPA_PLATFORM", "offscreen");
+            int argc = 1;
+            static char arg0[] = "arena-tests";
+            char *argv[] = {arg0, nullptr};
+            static QGuiApplication *app = new QGuiApplication(argc, argv);
+            (void)app;
+        }
+
+        g_fontFamily = QStringLiteral("Noto Sans Arabic");
+        if (!QFontDatabase::families().contains(g_fontFamily)) {
+            GTEST_SKIP() << "Arabic-capable font unavailable in this environment"
+                            " (no burn-in goldens can be verified)";
+        }
+        // All burn-in goldens use the same font for determinism.
+        Compositor::setDefaultSubtitleFont(g_fontFamily);
+    }
+
+    static QString g_fontFamily;
+};
+
+QString BurnIn::g_fontFamily;
+
+TEST_F(BurnIn, UrduBurnInGolden)
+{
+    const QImage out =
+        renderBurnInFrame(QStringLiteral("ur"), QString::fromUtf8("خوش آمدید"), true);
+    compareGolden(out, QStringLiteral("golden_burnin_urdu.png"));
+}
+
+TEST_F(BurnIn, ArabicBurnInGolden)
+{
+    const QImage out =
+        renderBurnInFrame(QStringLiteral("ar"), QString::fromUtf8("مرحباً بكم"), true);
+    compareGolden(out, QStringLiteral("golden_burnin_arabic.png"));
+}
+
+TEST_F(BurnIn, MultiLineCueBurnIn)
+{
+    const QImage out = renderBurnInFrame(
+        QStringLiteral("ur"), QString::fromUtf8("خط أ\nخط ب"), true);
+    const QImage flat = renderBurnInFrame(QStringLiteral("ur"), QString(), false);
+    // Two lines of text must be visibly taller than the flat frame diff of a
+    // single line: just assert the caption region changed at all.
+    EXPECT_GT(countDiffPixels(out, flat), 0);
+    // Frame past the cue end is untouched.
+    const QImage after =
+        renderBurnInFrame(QStringLiteral("ur"), QString::fromUtf8("خط أ"), true, 80);
+    EXPECT_EQ(countDiffPixels(after, flat), 0);
+}
+
+TEST_F(BurnIn, DisabledTrackIsNotBaked)
+{
+    const QString text = QString::fromUtf8("خوش آمدید");
+    const QImage on = renderBurnInFrame(QStringLiteral("ur"), text, true);
+    const QImage off = renderBurnInFrame(QStringLiteral("ur"), text, false);
+    EXPECT_GT(countDiffPixels(on, off), 0);
+    // The disabled track leaves the source pixels untouched.
+    EXPECT_EQ(off.pixel(320, 300), qRgb(38, 52, 82));
 }
