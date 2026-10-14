@@ -121,24 +121,17 @@ jobs:
       - name: Selftest
         run: .\build\app\Release\ArenaEdit.exe --selftest
 
-      - name: Package portable payload
+      # One-command release: stage the portable payload (DLLs keep their
+      # directory structure — platforms\qwindows.dll is load-bearing),
+      # build the branded installer, zip the payload.
+      - name: Release (stage + installer + zip)
         shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist\portable | Out-Null
-          Copy-Item build\app\Release\ArenaEdit.exe dist\portable\
-          Get-ChildItem build -Recurse -Filter "*.dll" | Where-Object {
-              $_.Name -match "Qt6|avcodec|avformat|avutil|swscale|swresample|postproc"
-          } | Copy-Item -Destination dist\portable\
-          Copy-Item -Recurse assets dist\portable\assets
-          Copy-Item i18n dist\portable\i18n
-
-      - name: Build installer
-        shell: pwsh
-        run: iscc tools\package.iss
+        run: tools\release.ps1 -SkipTests
 
       - uses: actions/upload-artifact@v4
         with:
           name: arenaedit-windows-x86_64
           path: |
             dist\ArenaEdit-*-Setup.exe
+            dist\ArenaEdit-*-portable-win64.zip
             dist\portable

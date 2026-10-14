@@ -1,4 +1,5 @@
 build/
+build-release/
 dist/
 __pycache__/
 CMakeUserPresets.json

@@ -626,9 +626,26 @@ bool MainWindow::openProjectFile(const QString &path)
 // read-only bundle in place) so it can be saved/relinked like any project.
 bool MainWindow::openSampleProject()
 {
-    const QString srcRoot = QStringLiteral(ARENA_ASSETS_DIR) + QStringLiteral("/sample_project");
-    const QString srcAep = srcRoot + QStringLiteral("/sample-project.aep");
-    if (!QFileInfo::exists(srcAep)) {
+    // Look in the shipped assets dir first, then the app directory (portable
+    // release layout: <appdir>/assets/sample_project — the compile-time
+    // source path does not exist on a user machine).
+    const QStringList candidates = {
+        QStringLiteral(ARENA_ASSETS_DIR) + QStringLiteral("/sample_project"),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/assets/sample_project"),
+    };
+    QString srcRoot;
+    const QString srcAep = [&] {
+        for (const QString &root : candidates)
+            if (QFileInfo::exists(root + QStringLiteral("/sample-project.aep")))
+                return root + QStringLiteral("/sample-project.aep");
+        return QString();
+    }();
+    for (const QString &root : candidates)
+        if (srcAep.startsWith(root)) {
+            srcRoot = root;
+            break;
+        }
+    if (srcAep.isEmpty()) {
         statusBar()->showMessage(arenaTr("sample.missing"), 6000);
         return false;
     }
