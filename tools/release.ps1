@@ -57,7 +57,7 @@ $cmakeArgs = @(
     "-DARENA_BUILD_DATE=" + (Get-Date -Format "yyyy-MM-dd HH:mm UTC")
 )
 if ($FfmpegDir) { $cmakeArgs += "-DARENA_FFMPEG_DIR=$FfmpegDir" }
-# vcpkg manifest build when VCPKG_ROOT is set (pins qtbase LGPL).
+# vcpkg toolchain when VCPKG_ROOT is set (CI installs qtbase/ffmpeg there).
 if ($env:VCPKG_ROOT) { $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$($env:VCPKG_ROOT)\scripts\buildsystems\vcpkg.cmake" }
 Write-Host "== configure ==" -ForegroundColor Cyan
 cmake @cmakeArgs

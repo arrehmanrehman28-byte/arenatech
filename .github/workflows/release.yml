@@ -1,61 +1,54 @@
-# Arena Edit — full Windows release (media + STT), run on GitHub.
+# Arena Edit — full Windows release build (Setup.exe + portable zip).
+# Trigger: Actions tab -> release-windows-full -> Run workflow (or a v* tag).
 #
-# Trigger:
-#   - "Actions" tab -> "release-windows-full" -> Run workflow (manual, recommended)
-#   - automatically on version tags: git tag v0.1.0 && git push origin v0.1.0
-#
-# What it does: builds an LGPL FFmpeg via vcpkg, then runs tools/release.ps1
-# -WithMedia (build -> all tests -> selftest with the real media fixture ->
-# portable zip with "Run Arena Edit.bat" -> branded installer). The final
-# artifacts (Setup.exe + portable zip) appear on the run page under
-# "Artifacts" — download, done.
+# FFmpeg comes from vcpkg as the LGPL build (the port's `gpl` feature stays
+# off by default; policy D-044: LGPL only). Qt6 comes from the same vcpkg.
+# whisper.cpp is built from the vendored sources.
 name: release-windows-full
 
 on:
   workflow_dispatch:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
 
 jobs:
-  windows-full:
+  release:
     name: Windows x64 full product
     runs-on: windows-2022
     env:
-      ARENA_SELFTEST_MEDIA: "${{ github.workspace }}\\tests\\fixtures\\clip01.mp4"
+      CMAKE_BUILD_TYPE: Release
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install vcpkg
-        uses: lukka/checkout-vcpkg@v5
-        with:
-          vcpkgGitCommitId: "auto"
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
 
-      - name: Install Inno Setup + nasm
-        run: choco install -y innosetup nasm --no-progress
-
-      # LGPL FFmpeg (the vcpkg port's default features do not enable GPL
-      # components — keeps the project's LGPL-only dependency policy).
-      # This step takes ~15-25 minutes; the rest of the run is fast.
-      - name: Build FFmpeg (LGPL) via vcpkg
+      # Official vcpkg clone + bootstrap (no third-party actions).
+      # Installs Qt6 (LGPL) and FFmpeg (LGPL default — gpl feature off).
+      - name: Set up vcpkg (Qt6 + FFmpeg LGPL)
         shell: pwsh
         run: |
-          & "$env:VCPKG_ROOT\vcpkg.exe" install ffmpeg:x64-windows
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg ffmpeg build failed" }
+          git clone --depth 1 https://github.com/microsoft/vcpkg vcpkg
+          & .\vcpkg\bootstrap-vcpkg.bat
+          $root = (Resolve-Path .\vcpkg).Path
+          Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_ROOT=$root"
+          & .\vcpkg\vcpkg.exe install qtbase:x64-windows ffmpeg:x64-windows
 
-      # Full product: import/decode/export/STT. Runs the complete test suite,
-      # the headless selftest against the real media fixture, stages the
-      # portable payload (with platforms\qwindows.dll structure +
-      # "Run Arena Edit.bat"), builds the installer, and zips everything.
-      - name: Release (build + test + stage + installer)
+      # One-command release pipeline: configure (vcpkg toolchain picked up
+      # from VCPKG_ROOT) -> build -> ctest (113) -> selftest with real media
+      # -> stage portable (DLL layout preserved) -> iscc installer -> zip.
+      - name: Build full product
         shell: pwsh
         run: |
-          $ffmpeg = "$env:VCPKG_ROOT\vcpkg_installed\x64-windows"
-          & tools\release.ps1 -WithMedia -FfmpegDir $ffmpeg
-          if ($LASTEXITCODE -ne 0) { throw "release.ps1 failed" }
+          $env:ARENA_SELFTEST_MEDIA = "$env:GITHUB_WORKSPACE\tests\fixtures\clip01.mp4"
+          tools\release.ps1 -WithMedia -FfmpegDir "$env:VCPKG_ROOT\vcpkg_installed\x64-windows"
 
-      - name: Upload release artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Show artifacts
+        shell: pwsh
+        run: Get-ChildItem dist | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
         with:
           name: arenaedit-windows-x86_64-full
           path: |
