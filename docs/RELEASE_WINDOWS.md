@@ -1,11 +1,32 @@
 # Building the Windows release (exe + installer)
 
-Arena Edit's release target is **Windows 10/11 64-bit**. Everything is wired
-for a one-command release; the only hard requirement is a Windows machine
-(or a Windows CI runner). This Linux dev environment cannot compile the
-Windows exe (no MSVC / no Qt-for-Windows cross-toolchain — see D-044).
+Arena Edit's release target is **Windows 10/11 64-bit**. Two ways to get the
+exe — **the GitHub route does the building for you**; the local route needs
+a Windows machine. (This Linux dev environment cannot compile the Windows
+exe — no MSVC / no Qt-for-Windows cross-toolchain; see D-044.)
 
-## One command
+## Route A — GitHub builds it (easiest, no Windows machine needed)
+
+1. **Create an empty repo** on [github.com/new](https://github.com/new)
+   (no README, no gitignore — the repo must be empty).
+2. **Double-click `push-to-github.bat`** in the repo root. It asks for the
+   repo name and a personal access token (token: [github.com/settings/tokens](https://github.com/settings/tokens),
+   classic token with `repo` scope). The token is removed from the repo's
+   git config immediately after the push — revoke it when done.
+3. **On GitHub:** repo → **Actions** tab → **release-windows-full** →
+   **Run workflow**. It builds an LGPL FFmpeg via vcpkg (~15–25 min), then
+   builds, tests (all 113), selftests against the real media fixture, and
+   packages everything.
+4. **Download** — when the run is green, the **Artifacts** section holds
+   `arenaedit-windows-x86_64-full`: the branded installer **and** the
+   portable zip (unzip → double-click `Run Arena Edit.bat`).
+
+The workflow also runs automatically on version tags
+(`git tag v0.1.0 && git push origin v0.1.0`). Every push to `main` runs the
+fast gate (`.github/workflows/ci.yml`): Linux full build + zero-warning +
+all tests + benchmark, Windows core build + tests + installer.
+
+## Route B — build locally on a Windows machine
 
 **Easiest way — double-click `release.bat`** (repo root). It finds
 Visual Studio 2022 itself, then runs the same pipeline:
