@@ -95,6 +95,15 @@ if (Test-Path $portable) { Remove-Item $portable -Recurse -Force }
 New-Item -ItemType Directory -Force $portable | Out-Null
 Copy-Item $exe.FullName (Join-Path $portable "ArenaEdit.exe")
 
+# Double-click launcher for end users (portable zip: unzip, run, done).
+$runBat = @"
+@echo off
+rem Arena Edit - Made by arenatechofficial.pages.dev
+cd /d "%~dp0"
+start "" "ArenaEdit.exe"
+"@
+Set-Content -Path (Join-Path $portable "Run Arena Edit.bat") -Value $runBat -Encoding ASCII
+
 $dlls = Get-ChildItem -Path $buildDir -Recurse -Filter "*.dll" | Where-Object {
     $_.FullName -notmatch "\\CMakeFiles\\" -and $_.Name -match "Qt6|MSVCP|VCRUNTIME|concrt|vcruntime"
 }

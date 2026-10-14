@@ -7,6 +7,14 @@ Windows exe (no MSVC / no Qt-for-Windows cross-toolchain — see D-044).
 
 ## One command
 
+**Easiest way — double-click `release.bat`** (repo root). It finds
+Visual Studio 2022 itself, then runs the same pipeline:
+
+```bat
+release.bat                  rem core build (no media)
+release.bat C:\ffmpeg        rem full build (import/decode/export/STT)
+```
+
 From a **VS 2022 Developer Prompt** (or any pwsh with the tools on PATH):
 
 ```powershell
@@ -23,9 +31,12 @@ headless selftest → stage the portable payload → `iscc tools\package.iss`
 
 | Artifact | What |
 |----------|------|
-| `ArenaEdit-0.1.0-portable-win64.zip` | Portable: `ArenaEdit.exe` + Qt/FFmpeg DLLs (**with `platforms\qwindows.dll` structure** — the exe will not start without it) + `assets\` + `i18n\` |
+| `ArenaEdit-0.1.0-portable-win64.zip` | Portable: `ArenaEdit.exe` + **`Run Arena Edit.bat`** (double-click launcher) + Qt/FFmpeg DLLs (**with `platforms\qwindows.dll` structure** — the exe will not start without it) + `assets\` + `i18n\` |
 | `ArenaEdit-0.1.0-Setup.exe` | Branded Inno Setup installer (icon, credit line, x64, Win10+, per-user install) |
 | `dist\portable\` | The staged folder, ready to run in place |
+
+**End-user flow:** send them the portable zip → unzip anywhere → double-click
+`Run Arena Edit.bat`. No installer, no admin rights, no runtime needed.
 
 The exe carries the app icon and version info via `app/arenaedit.rc`;
 the installer wizard uses the same icon.

@@ -50,6 +50,11 @@ M1/M7 behind build options.
 
 ### Windows (one command)
 
+**Release (easiest):** double-click `release.bat` in the repo root — it
+finds Visual Studio 2022 and produces `dist\ArenaEdit-0.1.0-portable-win64.zip`
+(unzip → double-click `Run Arena Edit.bat`) plus the branded installer.
+Full details: [docs/RELEASE_WINDOWS.md](docs/RELEASE_WINDOWS.md).
+
 ```powershell
 # From a VS 2022 Developer Prompt, with vcpkg available:
 tools\build.ps1 -Tests
@@ -59,11 +64,10 @@ Produces `build\app\Release\ArenaEdit.exe`, runs the tests, and runs the
 headless selftest. The full-media build (import/decode/export/STT) adds
 `-WithMedia -FfmpegDir <ffmpeg-dev-prefix>` (a vcpkg port dir or
 ffmpeg.org build with `include/lib/bin`; whisper.cpp compiles from the
-vendored tree). Packaging: stage the portable payload (exe + Qt/FFmpeg
-DLLs + `assets/` + `i18n/`, same layout CI uses) and run
-`iscc tools\package.iss` (Inno Setup 6). Code-signing: set `CERT_PATH` /
-`CERT_PASSWORD` before `iscc` for an authenticated build; without them the
-package is unsigned.
+vendored tree). `tools\release.ps1` (what `release.bat` runs) adds the
+portable staging + installer + zip. Code-signing: set `CERT_PATH` /
+`CERT_PASSWORD` for an authenticated build; without them the package is
+unsigned.
 
 ### Linux (dev/CI — same sources)
 
