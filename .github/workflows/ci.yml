@@ -22,26 +22,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install toolchain
+      - name: Install build tools + FFmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build libgtest-dev googletest libgl1-mesa-dev \
-            libfontconfig1-dev pkg-config gpg wget
-          # The Ubuntu 24.04 base image ships Qt 6.4, below the project's
-          # 6.5 minimum — install Qt >= 6.5 from the official Qt apt channel.
-          wget -O /tmp/qt6.key https://packagecloud.io/qt/qt6/gpgkey
-          sudo gpg --dearmor -o /usr/share/keyrings/qt6.gpg /tmp/qt6.key
-          echo "deb [signed-by=/usr/share/keyrings/qt6.gpg] https://packagecloud.io/qt/qt6/ubuntu/ noble main" \
-            | sudo tee /etc/apt/sources.list.d/qt6.list > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            qt6-base-dev \
+            libfontconfig1-dev pkg-config \
             libavformat-dev libavcodec-dev libavutil-dev \
             libswscale-dev libswresample-dev
 
+      # The Ubuntu 24.04 base image ships Qt 6.4, below the project's 6.5
+      # minimum — install Qt 6.8 LTS from the official Qt CDN via aqtinstall.
+      - name: Install Qt 6.8 (aqtinstall)
+        run: |
+          python3 -m pip install --user --quiet aqtinstall
+          ~/.local/bin/aqt install-qt linux desktop 6.8.3 -O /opt/qt6
+
       - name: Configure
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_PREFIX_PATH=/opt/qt6/6.8.3/gcc_64 \
           -DARENA_BUILD_TESTS=ON -DARENA_ENABLE_FFMPEG=ON -DARENA_ENABLE_WHISPER=ON
 
       - name: Build
