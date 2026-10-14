@@ -116,7 +116,7 @@ jobs:
             Write-Host "Using pre-installed vcpkg at $root"
           }
           Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_ROOT=$root"
-          & "$root\vcpkg.exe" install qtbase:x64-windows
+          & "$root\vcpkg.exe" install qtbase:x64-windows gtest:x64-windows
 
       - name: Save vcpkg binary cache
         if: always()

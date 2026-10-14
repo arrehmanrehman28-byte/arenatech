@@ -65,9 +65,9 @@ $cmakeArgs = @(
     "-B", $buildDir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=$Configuration",
     "-DARENA_BUILD_TESTS=ON",
     "-DARENA_ENABLE_FFMPEG=" + $(if ($WithMedia) { "ON" } else { "OFF" }),
-    "-DARENA_ENABLE_WHISPER=" + $(if ($WithMedia) { "ON" } else { "OFF" }),
-    # Quoted: the value contains spaces, which CMake would otherwise split.
-    '-DARENA_BUILD_DATE="' + (Get-Date -Format "yyyy-MM-dd HH:mm UTC") + '"'
+    "-DARENA_ENABLE_WHISPER=" + $(if ($WithMedia) { "ON" } else { "OFF" })
+    # ARENA_BUILD_DATE: left to CMake's TIMESTAMP fallback (configure time) —
+    # passing a spaced value from pwsh through native-arg quoting is fragile.
 )
 if ($FfmpegDir) { $cmakeArgs += "-DARENA_FFMPEG_DIR=$FfmpegDir" }
 # vcpkg toolchain when VCPKG_ROOT is set (CI installs qtbase/ffmpeg there).
