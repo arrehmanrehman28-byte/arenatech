@@ -81,7 +81,10 @@ jobs:
         shell: pwsh
         run: |
           $env:ARENA_SELFTEST_MEDIA = "$env:GITHUB_WORKSPACE\tests\fixtures\clip01.mp4"
-          tools\release.ps1 -WithMedia -FfmpegDir "$env:VCPKG_ROOT\vcpkg_installed\x64-windows"
+          # The image's pre-installed vcpkg uses <root>\installed as its
+          # default install root (not vcpkg_installed); detect which exists.
+          $inst = if (Test-Path "$env:VCPKG_ROOT\installed\x64-windows") { "$env:VCPKG_ROOT\installed" } else { "$env:VCPKG_ROOT\vcpkg_installed" }
+          tools\release.ps1 -WithMedia -FfmpegDir "$inst\x64-windows"
 
       - name: Show artifacts
         shell: pwsh

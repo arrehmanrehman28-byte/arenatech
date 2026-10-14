@@ -36,11 +36,20 @@ warnings) → tests → targeted checks → evidence.*
 
 **Verification**
 
-- Linux job: success on GitHub (real FFmpeg 6.1.1 + Qt 6.8.3, ctest
-  113, selftest, benchmark).
-- Windows job: in progress (full-media release build, vcpkg
-  qtbase/ffmpeg from source ~70 min, then MSVC build + ctest +
-  selftest + iscc + zip).
+- Linux job: GREEN on GitHub in ~4.5 min (aqt Qt 6.8.3, apt FFmpeg
+  6.1.1, zero-warning build, ctest 113, selftest, benchmark, portable
+  payload artifact) — runs 38596696301, 38596756168, 38630722979,
+  38634448033.
+- Windows job: debugged through four failures (each fixed + documented):
+  `lukka/*` actions removed → official vcpkg; `Missing tool: cl` →
+  vcvars64 via GITHUB_ENV (D-046); vcvars clobbering VCPKG_ROOT → skip
+  VCPKG* vars; GTest missing → vcpkg port; then the real one —
+  PowerShell comma/`+` precedence split `-DARENA_ENABLE_FFMPEG=` from
+  its value, silently building media stubs (D-048), plus the image
+  vcpkg install-root `installed` vs `vcpkg_installed` (D-049).
+  vcpkg binary-cache (actions/cache on the archives dir) collapses the
+  ~75 min qtbase/ffmpeg source build to ~1 min when the image vcpkg
+  commit is unchanged.
 - Git push auth: fine-grained PAT accepted only as
   `<username>:<token>` Basic over HTTPS (the `x-access-token` username
   form is rejected by github.com's git endpoint); token used inline in
@@ -50,8 +59,9 @@ warnings) → tests → targeted checks → evidence.*
 
 **Not done / next**
 
-- Watch the Windows release run to green → hand the artifact download
-  link to the user; rebuild the source zip with the final history.
+- Windows release build (full media) on GitHub → hand the artifact
+  download link to the user; rebuild the source zip with the final
+  history.
 
 ## 2026-10-14 — M9 Release (Linux scope): verified ✅ (Windows artifact pending, D-044)
 

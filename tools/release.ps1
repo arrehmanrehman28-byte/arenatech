@@ -61,11 +61,16 @@ if (-not $iscc) {
 }
 
 # --- 2. Configure -------------------------------------------------------------
+# NOTE: build the ON/OFF values into variables first. In a PowerShell array
+# literal the comma binds tighter than '+', so "-DFOO=" + $(...) , ... splits
+# into TWO elements ("-DFOO=" and "ON") and CMake receives a broken flag.
+$ffOn = if ($WithMedia) { "ON" } else { "OFF" }
+$whOn = if ($WithMedia) { "ON" } else { "OFF" }
 $cmakeArgs = @(
     "-B", $buildDir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=$Configuration",
     "-DARENA_BUILD_TESTS=ON",
-    "-DARENA_ENABLE_FFMPEG=" + $(if ($WithMedia) { "ON" } else { "OFF" }),
-    "-DARENA_ENABLE_WHISPER=" + $(if ($WithMedia) { "ON" } else { "OFF" })
+    "-DARENA_ENABLE_FFMPEG=$ffOn",
+    "-DARENA_ENABLE_WHISPER=$whOn"
     # ARENA_BUILD_DATE: left to CMake's TIMESTAMP fallback (configure time) —
     # passing a spaced value from pwsh through native-arg quoting is fragile.
 )
