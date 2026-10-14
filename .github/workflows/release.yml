@@ -21,19 +21,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Inno Setup
-        run: choco install innosetup -y --no-progress
-
-      # Official vcpkg clone + bootstrap (no third-party actions).
-      # Installs Qt6 (LGPL) and FFmpeg (LGPL default — gpl feature off).
+      # Inno Setup (iscc), CMake and Ninja ship with the runner image.
+      # Prefer the image's pre-installed vcpkg (C:\vcpkg per
+      # VCPKG_INSTALLATION_ROOT; binary cache may cover qtbase/ffmpeg), fall
+      # back to a fresh clone + bootstrap. Installs Qt6 (LGPL) and FFmpeg
+      # (LGPL default — gpl feature off).
       - name: Set up vcpkg (Qt6 + FFmpeg LGPL)
         shell: pwsh
         run: |
-          git clone --depth 1 https://github.com/microsoft/vcpkg vcpkg
-          & .\vcpkg\bootstrap-vcpkg.bat
-          $root = (Resolve-Path .\vcpkg).Path
+          $root = $null
+          foreach ($cand in @("C:\vcpkg", "D:\vcpkg")) {
+            if (Test-Path "$cand\vcpkg.exe") { $root = $cand; break }
+          }
+          if (-not $root) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg vcpkg
+            & .\vcpkg\bootstrap-vcpkg.bat
+            $root = (Resolve-Path .\vcpkg).Path
+          } else {
+            Write-Host "Using pre-installed vcpkg at $root"
+          }
           Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_ROOT=$root"
-          & .\vcpkg\vcpkg.exe install qtbase:x64-windows ffmpeg:x64-windows
+          & "$root\vcpkg.exe" install qtbase:x64-windows ffmpeg:x64-windows
+
+      # Put MSVC (cl/link) on PATH for the following steps; `set` output is
+      # picked up by Actions as step environment.
+      - name: Set up MSVC (vcvars64)
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"^C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VSPATH=%%i"
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+          set
 
       # One-command release pipeline: configure (vcpkg toolchain picked up
       # from VCPKG_ROOT) -> build -> ctest (113) -> selftest with real media

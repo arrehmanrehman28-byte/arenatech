@@ -89,19 +89,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Inno Setup
-        run: choco install innosetup -y --no-progress
-
-      # Official vcpkg (no third-party actions). Installs Qt 6 (LGPL) only —
-      # this job is the fast core gate; the full-media build is release.yml.
+      # Inno Setup (iscc), CMake and Ninja ship with the runner image.
+      # Prefer the image's pre-installed vcpkg (C:\vcpkg per
+      # VCPKG_INSTALLATION_ROOT), fall back to a fresh clone + bootstrap.
+      # Installs Qt 6 (LGPL) only — this job is the fast core gate; the
+      # full-media build is release.yml.
       - name: Set up vcpkg + Qt
         shell: pwsh
         run: |
-          git clone --depth 1 https://github.com/microsoft/vcpkg vcpkg
-          & .\vcpkg\bootstrap-vcpkg.bat
-          $root = (Resolve-Path .\vcpkg).Path
+          $root = $null
+          foreach ($cand in @("C:\vcpkg", "D:\vcpkg")) {
+            if (Test-Path "$cand\vcpkg.exe") { $root = $cand; break }
+          }
+          if (-not $root) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg vcpkg
+            & .\vcpkg\bootstrap-vcpkg.bat
+            $root = (Resolve-Path .\vcpkg).Path
+          } else {
+            Write-Host "Using pre-installed vcpkg at $root"
+          }
           Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_ROOT=$root"
-          & .\vcpkg\vcpkg.exe install qtbase:x64-windows
+          & "$root\vcpkg.exe" install qtbase:x64-windows
+
+      # Put MSVC (cl/link) on PATH for the following steps; `set` output is
+      # picked up by Actions as step environment.
+      - name: Set up MSVC (vcvars64)
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"^C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VSPATH=%%i"
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+          set
 
       # release.ps1 reads VCPKG_ROOT, wires the CMake toolchain, then runs:
       # configure -> build -> ctest (113) -> selftest -> stage portable ->
