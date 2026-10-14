@@ -80,6 +80,77 @@ warnings) → tests → targeted checks → evidence.*
 - Wire `Transcriber` into the AI panel so a clip's local transcript can
   seed the cut/chapter/title prompts (text only ever leaves the machine).
 
+## 2026-10-14 — M7.2/M7.3 Transcript→features + NL command bar: verified ✅ (M7 complete)
+
+**Scope delivered**
+
+- **M7.2 — local transcript feeds the M6 features** (this entry):
+  - AI panel **Transcribe** section: model picker (tiny/base/small, with
+    size), one-click local transcription of the first video clip on a
+    worker thread (on-demand SHA-256-pinned model, download + progress
+    reported), read-only transcript view. Honest availability: the section
+    is disabled with an explanation when whisper.cpp is not compiled in,
+    or when there is no project/clip.
+  - `transcriptLines()` now **prefers the local STT transcript** over
+    subtitle cues for the cut/chapter/title prompts — "edit suggestions
+    from transcript + silence map" from the plan. The transcript is
+    in-memory per project (cleared on project switch; never persisted —
+    D-036). Pure formatter `transcriptLines(segments, fps)` unit-tested.
+- **M7.3 — NL command bar (`/ai`)** (this entry):
+  - Palette `/ai <request>` is now the command bar (the panel's own input
+    keeps free-form Ask AI). Flow: `actionPrompt` (schema + machine
+    project context: fps, clip list, duration, markers) → streamed model
+    response → `parseActions` (last-valid-candidate extract + strict
+    `actionValidator` schema) → **preview card** with translatable lines
+    per action → Accept → `applyAiActions` → **one undoable command per
+    applicable action**.
+  - Apply mapping (D-037): `add_transition` → `effects.transition`
+    `{type, duration:frames}` — the exact shape the M3 compositor and
+    exporter already render (`fade_to_black` on the last clip is a fade-out
+    with no next clip); `set_clip_speed` → `Clip.speed`; `add_marker` →
+    labeled marker (time in project frames); `export` → opens the export
+    dialog with the preset preselected (`preselectPreset`), the user still
+    confirms. Two gates: validation at parse, grounding at apply (D-038).
+  - 24 new i18n keys × 8 catalogs (355 keys each).
+
+**Verification**
+
+- Build: full tree, **0 warnings**.
+- ctest: **110/110** (was 103 after M7.1): +6 NL unit tests
+  (`ActionPromptSubstitutesContextAndRequest`, `ParseActionsAcceptsValidArray`,
+  `ParseActionsAcceptsAllSupportedOps`, `ParseActionsRejections` (8 cases),
+  `ParseActionsIgnoresEchoedTemplate`, `ParseActionsSurvivesUnbalancedEcho`)
+  + `Stt.TranscriptLinesFormat` (M7.2 formatter).
+- guismoke: **+16 M7 checks** (85 total), 6/6 direct runs clean —
+  including the **M7 acceptance flow**: "add a fade out to the last clip"
+  response → applied → last clip carries `fade_to_black` @ 0.5 s frames →
+  **the compositor's final frame is (near-)black** → undo removes it;
+  plus unknown-op no-op, speed 1.5× + undo, labeled marker + undo,
+  out-of-range index skip.
+- **Live gateway session, all tasks green** (`exit 0`, 0 network errors):
+  [`docs/live_sessions/m7_smart_live_session_2026-10-14.md`](live_sessions/m7_smart_live_session_2026-10-14.md)
+  — all four M6 tasks re-passed, and the three NL commands produced valid,
+  correct actions: fade-out on the last clip (index -1), 1.5× speed on
+  clip 1, marker at frame 360 ("12 seconds" at 30 fps). Model:
+  `nvidia/nemotron-3-super-120b-a12b:free` (AI_INTEGRATION.md §9).
+
+**Bugs found + fixed by the live run** (regression tests each)
+
+- `extractJsonArray` aborted at the first *unbalanced* `[` (a half-written
+  CoT template echo: `..."duration_ms":???}`) and never saw the real
+  answer array that followed — now resumes scanning (D-028 extension).
+- The NL prompt made `duration_ms` look required, so a conservative model
+  emitted `[]` for "add a fade out to the last clip" (no duration given) —
+  prompt now documents it as optional (editor default 0.5 s).
+
+**Not done / next**
+
+- M8 Polish: onboarding tour, a11y audit, DPI 100–300 %, icon set,
+  screenshots.
+- M9 Release: portable .exe, Inno package, benchmark report.
+- Product decision (anytime): whether a project's STT transcript should
+  ever be persisted to the `.aep` (currently deliberately not — D-036).
+
 ## 2026-10-13 — M6 AI features: verified ✅
 
 **Scope delivered**

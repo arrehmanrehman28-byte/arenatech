@@ -9,6 +9,7 @@
 // the main window turns it into an undoable command. The panel itself
 // never mutates the project.
 #include <QComboBox>
+#include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -20,6 +21,9 @@
 #include <QWidget>
 
 #include "aifeatures.h"
+#include "whisper.h"
+
+class QGroupBox;
 
 namespace arena {
 
@@ -27,8 +31,8 @@ class KiloClient;
 class Settings;
 class Project;
 
-// The four M6 AI tasks.
-enum class AiTaskType { Translate, Chapters, Titles, Cuts };
+// The four M6 AI tasks + the M7 NL command.
+enum class AiTaskType { Translate, Chapters, Titles, Cuts, Command };
 
 // Generic free-form "Ask AI" card: streams the answer, offers
 // copy-to-clipboard / reject.
@@ -116,6 +120,9 @@ public:
     TitleResult titleResult() const { return m_title; }
     void setCuts(const QVector<CutSuggestion> &v) { m_cuts = v; }
     QVector<CutSuggestion> cuts() const { return m_cuts; }
+    // M7.3 NL command payload: the validated action list.
+    void setActions(const QJsonArray &v) { m_actions = v; }
+    QJsonArray actions() const { return m_actions; }
 
 signals:
     void accepted();
@@ -133,6 +140,7 @@ private:
     QVector<ChapterSuggestion> m_chapters;
     TitleResult m_title;
     QVector<CutSuggestion> m_cuts;
+    QJsonArray m_actions;
     QSet<int> m_retried;
 };
 
@@ -145,7 +153,10 @@ public:
     // Attach/detach the project the task cards work on (nullptr = none).
     // Cheap: called on every project view refresh.
     void setProject(Project *project);
-    void askText(const QString &text); // used by the palette's /ai mode
+    void askText(const QString &text); // free-form "Ask AI" (panel input)
+    // M7.3: NL command bar (palette /ai): stream the model's action list,
+    // validate it, show a preview card; Accept emits actionsAccepted.
+    void runCommand(const QString &text);
 
 signals:
     void enableRequested();   // main window shows the privacy notice
@@ -158,6 +169,8 @@ signals:
     void chaptersAccepted(const QVector<ChapterSuggestion> &chapters);
     void titleAccepted(const TitleResult &title);
     void cutsAccepted(const QVector<CutSuggestion> &cuts);
+    // M7.3: validated NL action list accepted from the command preview.
+    void actionsAccepted(const QJsonArray &actions);
 
 private:
     void ask();
@@ -169,6 +182,13 @@ private:
     void finishTranslation(TaskResultCard *card, const QString &sourceTrackId,
                            const QString &targetLang);
     void onCardAccepted(TaskResultCard *card);
+    // M7.2 local STT (transcript feeds the feature prompts; text only
+    // leaves the machine).
+    QString sttSourcePath() const; // first video clip, absolute ("" if none)
+    void runSttTranscribe();
+    void onSttProgress(float f);
+    void onSttDone(bool ok, const QList<TranscriptSegment> &segs, const QString &err);
+    QString commandContext() const; // machine context for the NL prompt
     // Drop the cached response for a prompt whose last reply failed
     // validation, so a resend actually reaches the gateway.
     void invalidateFor(const QString &userPrompt);
@@ -193,6 +213,15 @@ private:
     QLineEdit *m_askInput;
     QPushButton *m_askSend;
     QListWidget *m_results;
+
+    // M7.2 local STT section.
+    QGroupBox *m_sttBox = nullptr;
+    QComboBox *m_sttModel = nullptr;
+    QPushButton *m_sttButton = nullptr;
+    QLabel *m_sttStatus = nullptr;
+    QPlainTextEdit *m_sttView = nullptr;
+    QList<TranscriptSegment> m_sttSegments; // in-memory; cleared on project change
+    bool m_sttBusy = false;
 };
 
 } // namespace arena

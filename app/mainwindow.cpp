@@ -377,6 +377,7 @@ void MainWindow::buildDocks()
     connect(m_aiPanel, &AiPanel::chaptersAccepted, this, &MainWindow::applyAiChapters);
     connect(m_aiPanel, &AiPanel::titleAccepted, this, &MainWindow::applyAiTitle);
     connect(m_aiPanel, &AiPanel::cutsAccepted, this, &MainWindow::applyAiCuts);
+    connect(m_aiPanel, &AiPanel::actionsAccepted, this, &MainWindow::applyAiActions);
 
     m_subtitles = new SubtitlesWidget;
     auto *subDock = new QDockWidget;
@@ -468,7 +469,14 @@ void MainWindow::askAiFromPalette(const QString &text)
         enableAiWithNotice();
         return;
     }
-    m_aiPanel->askText(text);
+    // M7.3: the palette's /ai mode is the NL command bar — the text is a
+    // request interpreted into validated, previewable, undoable actions.
+    if (m_project) {
+        m_aiPanel->runCommand(text);
+    } else {
+        statusBar()->showMessage(arenaTr("panel.ai.cmd.noProject"), 4000);
+        return;
+    }
     if (auto *dock = findChild<QDockWidget *>(QStringLiteral("AiDock")))
         dock->show();
 }
@@ -1143,6 +1151,113 @@ struct DeleteClipCommand : public Command {
     }
     QString actionName() const override { return arenaTr("media.clipDeleted"); }
     int retainedBytes() const override { return 512; }
+};
+
+// Set (or clear) a clip's tail transition — the `effects.transition`
+// object the compositor renders (M3). Only that sub-object is touched, so
+// other effects survive; undo restores the previous one.
+struct SetTransitionCommand : public Command {
+    Project *project = nullptr;
+    QString clipId;
+    QJsonObject to; // empty object = remove the transition
+    QJsonObject from;
+    bool hasFrom = false;
+    SetTransitionCommand(Project *p, QString id, QJsonObject tr)
+        : project(p), clipId(std::move(id)), to(std::move(tr))
+    {
+    }
+    void applySide(const QJsonObject &tr, bool present)
+    {
+        for (Track &t : project->tracks)
+            for (Clip &c : t.clips)
+                if (c.id == clipId) {
+                    QJsonObject fx = c.effects;
+                    if (present) fx.insert(QStringLiteral("transition"), tr);
+                    else fx.remove(QStringLiteral("transition"));
+                    c.effects = fx;
+                }
+    }
+    void execute() override
+    {
+        hasFrom = false;
+        for (Track &t : project->tracks)
+            for (const Clip &c : t.clips)
+                if (c.id == clipId) {
+                    from = c.effects.value(QStringLiteral("transition")).toObject();
+                    hasFrom = true;
+                }
+        applySide(to, !to.isEmpty());
+    }
+    void undo() override
+    {
+        if (!hasFrom) return;
+        applySide(from, !from.isEmpty());
+    }
+    QString actionName() const override { return arenaTr("cmd.setTransition"); }
+    int retainedBytes() const override { return 128 + int(to.size()) + int(from.size()); }
+};
+
+// Set one clip's playback speed (undoable).
+struct SetClipSpeedCommand : public Command {
+    Project *project = nullptr;
+    QString clipId;
+    double to = 1.0;
+    double from = 1.0;
+    bool hasFrom = false;
+    SetClipSpeedCommand(Project *p, QString id, double speed)
+        : project(p), clipId(std::move(id)), to(speed)
+    {
+    }
+    void execute() override
+    {
+        hasFrom = false;
+        for (Track &t : project->tracks)
+            for (const Clip &c : t.clips)
+                if (c.id == clipId) {
+                    from = c.speed;
+                    hasFrom = true;
+                }
+        for (Track &t : project->tracks)
+            for (Clip &c : t.clips)
+                if (c.id == clipId) c.speed = to;
+    }
+    void undo() override
+    {
+        if (!hasFrom) return;
+        for (Track &t : project->tracks)
+            for (Clip &c : t.clips)
+                if (c.id == clipId) c.speed = from;
+    }
+    QString actionName() const override { return arenaTr("cmd.setClipSpeed"); }
+    int retainedBytes() const override { return 96; }
+};
+
+// Add a labeled timeline marker (undoable; remove the newest match).
+struct AddLabeledMarkerCommand : public Command {
+    Project *project = nullptr;
+    qint64 time = 0;
+    QString label;
+    AddLabeledMarkerCommand(Project *p, qint64 t, QString lbl)
+        : project(p), time(t), label(std::move(lbl))
+    {
+    }
+    void execute() override
+    {
+        Marker m;
+        m.time = time;
+        m.label = label;
+        project->markers.append(m);
+    }
+    void undo() override
+    {
+        for (int i = project->markers.size() - 1; i >= 0; --i)
+            if (project->markers[i].time == time && project->markers[i].label == label) {
+                project->markers.removeAt(i);
+                return;
+            }
+    }
+    QString actionName() const override { return arenaTr("timeline.markerAdded"); }
+    int retainedBytes() const override { return 64 + int(label.size()); }
 };
 
 // Re-point all clips from one source to another (undoable).
@@ -1866,6 +1981,67 @@ void MainWindow::applyAiCuts(const QVector<CutSuggestion> &cuts)
     statusBar()->showMessage(
         arenaTr("panel.ai.apply.cuts", {{QStringLiteral("count"), QString::number(applied)}}),
         5000);
+}
+
+// M7.3: apply a *validated* NL action list (one undoable command per
+// applicable action). `export` is not an edit — it opens the export dialog
+// with the preset preselected; the user still confirms the export.
+int MainWindow::applyAiActions(const QJsonArray &actions)
+{
+    if (!m_project || actions.isEmpty()) return 0;
+    const double fps = m_project->fps;
+    const int ti = primaryVideoTrackIndex();
+    const int clipCount = ti >= 0 ? m_project->tracks[ti].clips.size() : 0;
+    int applied = 0;
+    QString exportPreset;
+    for (const QJsonValue &v : actions) {
+        const QJsonObject a = v.toObject();
+        const QString op = a.value(QStringLiteral("op")).toString();
+        if (op == QLatin1String("add_transition") || op == QLatin1String("set_clip_speed")) {
+            const QJsonObject target = a.value(QStringLiteral("target")).toObject();
+            int idx = static_cast<int>(target.value(QStringLiteral("index")).toDouble(0));
+            if (idx == -1) idx = clipCount - 1; // -1 = last clip (prompt contract)
+            if (ti < 0 || idx < 0 || idx >= clipCount) continue; // ungroundable target
+            const Clip &clip = m_project->tracks[ti].clips[idx];
+            if (op == QLatin1String("add_transition")) {
+                QJsonObject tr;
+                tr.insert(QStringLiteral("type"), a.value(QStringLiteral("transition")).toString());
+                // The compositor takes the duration in *frames* (M3 contract).
+                const double ms = a.value(QStringLiteral("duration_ms")).toDouble(500);
+                tr.insert(QStringLiteral("duration"),
+                          qMax(1, static_cast<int>(qRound(ms / 1000.0 * fps))));
+                commitCommand(std::make_unique<SetTransitionCommand>(m_project.get(), clip.id, tr));
+            } else {
+                commitCommand(std::make_unique<SetClipSpeedCommand>(
+                    m_project.get(), clip.id, a.value(QStringLiteral("speed")).toDouble(1.0)));
+            }
+            ++applied;
+        } else if (op == QLatin1String("add_marker")) {
+            const qint64 frames = static_cast<qint64>(a.value(QStringLiteral("time")).toDouble(0));
+            commitCommand(std::make_unique<AddLabeledMarkerCommand>(
+                m_project.get(), frames, a.value(QStringLiteral("label")).toString()));
+            ++applied;
+        } else if (op == QLatin1String("export")) {
+            exportPreset = a.value(QStringLiteral("preset")).toString();
+        }
+    }
+    if (!exportPreset.isEmpty()) {
+        openExportDialog();
+        if (m_exportDialog)
+            m_exportDialog->preselectPreset(exportPreset);
+    }
+    statusBar()->showMessage(
+        arenaTr("panel.ai.apply.actions", {{QStringLiteral("count"), QString::number(applied)}}),
+        5000);
+    return applied;
+}
+
+QString MainWindow::describeAiAction(const QJsonObject &action) const
+{
+    const int ti = primaryVideoTrackIndex();
+    const int n = m_project && ti >= 0 ? m_project->tracks[ti].clips.size() : 0;
+    const double fps = m_project ? m_project->fps : 30.0;
+    return aifeatures::actionDescription(action, fps, n);
 }
 
 // --- M4 export ---------------------------------------------------------------

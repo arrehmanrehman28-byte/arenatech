@@ -66,16 +66,29 @@ inline QString suggestCuts()
 }
 
 // NL command bar: strictly validated JSON action list (see actionvalidator.h).
+// {context} = machine-readable project context (fps, clip list, markers);
+// {request} = the user's natural-language command.
 inline QString naturalLanguageToActions()
 {
     return QStringLiteral(
         "You are Arena Edit's command interpreter.\n"
         "Convert the user request into a JSON array of actions. Valid actions:\n"
-        "{\"op\":\"add_transition\",\"target\":{\"type\":\"clip\",\"index\":N},\"transition\":\"cross_dissolve|wipe|push|fade_to_black\",\"duration_ms\":500}\n"
+        "{\"op\":\"add_transition\",\"target\":{\"type\":\"clip\",\"index\":N},\"transition\":\"cross_dissolve|wipe|push|fade_to_black\"}\n"
         "{\"op\":\"set_clip_speed\",\"target\":{\"type\":\"clip\",\"index\":N},\"speed\":1.5}\n"
-        "{\"op\":\"add_marker\",\"time\":0,\"label\":\"...\"}\n"
+        "{\"op\":\"add_marker\",\"time\":FRAMES,\"label\":\"...\"}\n"
         "{\"op\":\"export\",\"preset\":\"youtube_1080p|instagram_reels|web_720p|prores_master|audio_podcast|webm_web\",\"subtitles\":\"burn|sidecar|none\"}\n"
-        "Clip index -1 means the last clip. Output the JSON array only, nothing else.\n"
+        "Rules:\n"
+        "1. Clip indices are 0-based on the main video track; -1 means the last clip.\n"
+        "2. \"fade out\" or \"fade to black\" = add_transition with transition \"fade_to_black\".\n"
+        "3. add_marker time is integer FRAMES at the project fps (e.g. 300 = 10 s at 30 fps).\n"
+        "4. add_transition may carry \"duration_ms\":10..10000; omit it when the user did not\n"
+        "   specify a length (the editor then uses a 0.5 s default) — omitting it is not\n"
+        "   inventing a value, so do not output [] for that reason.\n"
+        "5. speed is 0.1..16; label is at most 120 characters.\n"
+        "6. Use only the project context facts; never invent clips or times.\n"
+        "6. If the request maps to no valid action, output [].\n"
+        "Project context:\n{context}\n"
+        "Output the JSON array only, nothing else.\n"
         "User request: {request}");
 }
 

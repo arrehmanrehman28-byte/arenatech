@@ -83,6 +83,14 @@ public:
     void applyAiChapters(const QVector<ChapterSuggestion> &chapters);
     void applyAiTitle(const TitleResult &t);
     void applyAiCuts(const QVector<CutSuggestion> &cuts);
+    // M7.3: NL command bar. Applies a *validated* action list (see
+    // actionValidator) as one undoable command per applicable action.
+    // `export` opens the export dialog with the preset preselected (the
+    // user still confirms). Returns the number of actions applied.
+    int applyAiActions(const QJsonArray &actions);
+    // Human-readable, one-line description of a single validated action
+    // (the NL preview card + the apply status message). Empty if unknown.
+    QString describeAiAction(const QJsonObject &action) const;
     // Ripple-remove [startFrame, endFrame) on the primary video track
     // (one undoable command). Public so the AI accept path and the headless
     // smoke test share the exact same code path.

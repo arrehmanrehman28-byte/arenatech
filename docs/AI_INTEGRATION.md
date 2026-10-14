@@ -318,3 +318,49 @@ last model verified stable, overridable by CLI argument.
    directory (`QSettings::setPath`) before `Settings` is constructed —
    the driver enables AI for the session, and the defaults test asserts a
    clean profile.
+
+## 9. M7 smart-features session — recorded live (2026-10-14, 12:48 UTC)
+
+The M7 **NL command bar** was run end-to-end against the live gateway by
+`tools/arena_ai_live` (same synthetic 45-cue text-only session as M6, plus
+the new Task 5 with three natural-language commands on a two-clip project).
+The M6 four tasks were re-run and all pass. **Full raw log:**
+[`live_sessions/m7_smart_live_session_2026-10-14.md`](live_sessions/m7_smart_live_session_2026-10-14.md)
+— every prompt and every raw response, unedited.
+
+**Result: all tasks passed validation** (`exit 0`, "network errors: no /
+validation failures: no"), model `nvidia/nemotron-3-super-120b-a12b:free`:
+
+| Task | Model output | Validation |
+|------|--------------|------------|
+| Smart title & description | "How to Brew the Perfect Cup of Tea – AI Demo" (44 ch) + description | ≤60 / ≤300 ✓ |
+| Chapters | 7 chapters, e.g. `00:00:01 Welcome and Intro` … `00:01:41 Cleanup and Farewell` | 3–10, non-decreasing ≤ duration, ≤6 words ✓ |
+| Translation → `es` | 45/45 lines in 2 batches (40+5) | exactly N per batch, same order ✓ |
+| Cut suggestions | 2 silences (`00:00:00:00→00:00:01:15`, `00:00:55:27→00:00:59:18`) + 1 filler (`00:00:24:27→00:00:25:12`, the "um,") | frame-exact SMPTE, reason ∈ {silence,filler}, conf ∈ [0,1] ✓ |
+| **NL: "Add a fade out to the last clip"** | `add_transition {clip:-1, fade_to_black}` (duration_ms omitted) | strict action schema ✓ → preview "Fade to black on clip 2/2" |
+| **NL: "Make the first clip play at 1.5x speed"** | `set_clip_speed {clip:0, speed:1.5}` | strict schema ✓ → "Clip 1/2 speed → 1.5×" |
+| **NL: "Add a marker labeled 'Tea tips' at 12 seconds"** | `add_marker {time:360, label:"Tea tips"}` | strict schema ✓ → "Marker at 00:00:12:00 — Tea tips" |
+
+### Findings that changed shipped code (all with regression tests)
+
+1. **Extractor aborted on a half-written echo (D-028 extension).** A
+   reasoning model echoed a template in its chain-of-thought that was a
+   `[` never closed (`..."duration_ms":???}`). `extractJsonArray` used to
+   `break` at the first unbalanced candidate, so it never reached the real
+   (balanced) answer array that followed → "no actions found". It now
+   resumes scanning from the next `[` when a candidate is unbalanced.
+   Regression: `ParseActionsSurvivesUnbalancedEcho` (mirrors the exact
+   recorded failure).
+2. **`duration_ms` must be optional in the NL prompt.** The schema line
+   showed `"duration_ms":500`, which a literal reading of "never invent
+   values" turned into a *required* field: for "add a fade out to the last
+   clip" the model reasoned it lacked the duration and emitted `[]`
+   (correct behavior given the prompt!). The prompt now states
+   `duration_ms` is optional and omitting it is not inventing; the
+   validator already treated it as optional, and the apply path defaults
+   to 500 ms. After the fix the same request produced the correct
+   `fade_to_black` action (recorded above).
+3. **NL time is integer frames at the project fps.** `add_marker.time` is
+   frames, and the prompt carries `{context}` with the fps so the model can
+   convert ("12 seconds" → `360` at 30 fps) instead of guessing. Verified
+   in the recorded session.

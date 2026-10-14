@@ -60,4 +60,9 @@ public:
                            QString *detectedLanguage = nullptr);
 };
 
+// Format transcript segments as "HH:MM:SS:FF text" lines for the feature
+// prompts (aifeatures::cutsPrompt / chaptersPrompt take these). Segment
+// start times in ms are converted to project frames at `fps`.
+QStringList transcriptLines(const QList<TranscriptSegment> &segments, double fps);
+
 } // namespace arena

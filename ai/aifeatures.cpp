@@ -2,6 +2,8 @@
 #include "aifeatures.h"
 #include "prompts.h"
 #include "actionvalidator.h"
+#include "i18n.h"
+#include "util.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -259,6 +261,82 @@ bool parseCuts(const QString &raw, double durationSec, double fps,
         out->append({s, e, reason, conf});
     }
     return true;
+}
+
+// NL command bar: extract (last valid balanced candidate wins) + strict
+// schema validation. Rejections come back as an error string; the caller
+// shows them — nothing is ever applied from an unvalidated response.
+bool parseActions(const QString &raw, QJsonArray *out, QString *err)
+{
+    const QJsonArray actions = actionValidator::extractJsonArray(raw);
+    const actionValidator::ValidationResult v =
+        actionValidator::validateActions(actions);
+    if (!v.ok) {
+        if (err)
+            *err = v.errors.isEmpty()
+                       ? QStringLiteral("no actions found")
+                       : v.errors.join(QStringLiteral("; "));
+        return false;
+    }
+    if (out) *out = actions;
+    return true;
+}
+
+namespace {
+int resolvedClipIndex(const QJsonObject &target, int clipCount)
+{
+    if (target.value(QStringLiteral("type")).toString() != QStringLiteral("clip"))
+        return -2;
+    int idx = static_cast<int>(target.value(QStringLiteral("index")).toDouble(0));
+    if (idx == -1) idx = clipCount - 1;
+    if (idx < 0 || idx >= clipCount)
+        return -2;
+    return idx;
+}
+} // namespace
+
+// One translatable preview line for a validated action.
+QString actionDescription(const QJsonObject &a, double fps, int clipCount)
+{
+    const QString op = a.value(QStringLiteral("op")).toString();
+    if (op == QLatin1String("add_transition") || op == QLatin1String("set_clip_speed")) {
+        const int idx = resolvedClipIndex(a.value(QStringLiteral("target")).toObject(), clipCount);
+        if (idx < 0) return QString();
+        const QString i = QStringLiteral("%1/%2").arg(idx + 1).arg(clipCount);
+        if (op == QLatin1String("add_transition")) {
+            const QString tr = a.value(QStringLiteral("transition")).toString();
+            const double ms = a.value(QStringLiteral("duration_ms")).toDouble(-1);
+            const QString dur = ms > 0
+                                    ? QStringLiteral(" (%1 s)").arg(ms / 1000.0, 0, 'f', 1)
+                                    : QString();
+            return arenaTr(QStringLiteral("panel.ai.cmd.transition"),
+                           {{QStringLiteral("tr"), arenaTr(QStringLiteral("panel.ai.tr.") + tr)},
+                            {QStringLiteral("i"), i},
+                            {QStringLiteral("d"), dur}});
+        }
+        const QString s = QString::number(a.value(QStringLiteral("speed")).toDouble(), 'g', 3);
+        return arenaTr(QStringLiteral("panel.ai.cmd.speed"),
+                       {{QStringLiteral("i"), i}, {QStringLiteral("s"), s}});
+    }
+    if (op == QLatin1String("add_marker")) {
+        const qint64 frames = static_cast<qint64>(a.value(QStringLiteral("time")).toDouble(0));
+        const QString label = a.value(QStringLiteral("label")).toString();
+        return arenaTr(QStringLiteral("panel.ai.cmd.marker"),
+                       {{QStringLiteral("tc"), framesToTimecode(frames, fps > 0 ? fps : 30.0)},
+                        {QStringLiteral("label"), label}});
+    }
+    if (op == QLatin1String("export"))
+        return arenaTr(QStringLiteral("panel.ai.cmd.export"),
+                       {{QStringLiteral("preset"), a.value(QStringLiteral("preset")).toString()}});
+    return QString();
+}
+
+QString actionPrompt(const QString &projectContext, const QString &request)
+{
+    QString p = prompts::naturalLanguageToActions();
+    p.replace(QStringLiteral("{context}"), projectContext);
+    p.replace(QStringLiteral("{request}"), request);
+    return p;
 }
 
 QString translatePrompt(const QVector<QJsonObject> &entries, const QString &targetLang)

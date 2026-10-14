@@ -230,3 +230,42 @@ New known limitations (M7.1):
 - CPU-only: no CUDA/Vulkan in this build (spec: CPU default); thread count
   is capped at `min(4, idealThreadCount)`.
 
+
+## Addendum — M7.2/M7.3 Transcript→features + NL command bar (2026-10-14)
+
+Per-milestone verification evidence lives in `PROGRESS.md`; this report
+keeps the M0 snapshot above. Current totals after M7:
+
+- **ctest: 110/110 pass** (109 unit + guismoke), **0 warnings** on a clean
+  full rebuild. Test count grew 103 → 110 (+7).
+- New suites (M7.3): `AiFeatures.ActionPromptSubstitutesContextAndRequest`,
+  `ParseActionsAcceptsValidArray`, `ParseActionsAcceptsAllSupportedOps`,
+  `ParseActionsRejections` (8 rejection classes),
+  `ParseActionsIgnoresEchoedTemplate` (last-valid-candidate rule under a
+  *valid* CoT echo), `ParseActionsSurvivesUnbalancedEcho` (live finding:
+  half-written CoT template echo must not abort the scan).
+- New suite (M7.2): `Stt.TranscriptLinesFormat` (segments →
+  "HH:MM:SS:FF text" lines; fps-specific frame math; whitespace-only
+  segments dropped).
+- guismoke: 85 checks including the 16-check M7 section — the acceptance
+  flow "add a fade out to the last clip" → validated apply → last clip
+  carries `fade_to_black` (0.5 s in frames) → **the compositor's final
+  frame renders (near-)black** → undo removes it; plus unknown-op no-op,
+  speed 1.5× + undo, labeled marker + undo, out-of-range index skip.
+- **Live gateway session (recorded, in-repo):**
+  `docs/live_sessions/m7_smart_live_session_2026-10-14.md` — all four M6
+  tasks re-passed and the three NL commands produced valid actions
+  (fade-to-black on clip -1, speed 1.5× on clip 0, marker at frame 360);
+  0 network errors; driver exit 0. Findings (extractor unbalanced-echo
+  abort; `duration_ms` optional in the prompt) are in
+  `AI_INTEGRATION.md` §9, each with a regression test.
+
+New known limitations (M7):
+
+- NL commands are English-first in practice (the prompt is English); the
+  *UI* around them is translated, but natural-language input quality for
+  other languages is untested on the free tier.
+- `export` from the NL bar opens the export dialog with the preset
+  preselected; it never starts an export by itself (D-037).
+- The STT transcript is in-memory per project (D-036): closing the
+  project loses it until re-transcribed.

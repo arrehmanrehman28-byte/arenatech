@@ -262,6 +262,17 @@ void ExportDialog::updateEstimates()
     m_updatingEstimates = false;
 }
 
+void ExportDialog::preselectPreset(const QString &presetName)
+{
+    if (presetName.isEmpty() || !m_presetList) return;
+    for (int i = 0; i < m_presetList->count(); ++i) {
+        auto *item = m_presetList->item(i);
+        const bool isTarget = item->text() == presetName;
+        item->setCheckState(isTarget ? Qt::Checked : Qt::Unchecked);
+    }
+    updateEstimates();
+}
+
 void ExportDialog::startForTest()
 {
     onStart();

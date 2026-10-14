@@ -7,11 +7,16 @@
 #include "util.h"
 #include <QApplication>
 #include <QClipboard>
+#include <QDir>
 #include <QFont>
 #include <QGuiApplication>
+#include <QFileInfo>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QThread>
 #include <QLabel>
 #include <QMessageLogger>
 #include <QMessageBox>
@@ -20,6 +25,34 @@
 #include <algorithm>
 
 namespace arena {
+
+namespace {
+// M7.2: STT runs on a worker thread (download + model load + decode +
+// whisper); progress/result are queued back to the UI thread.
+class SttWorker : public QObject {
+    Q_OBJECT
+public:
+    explicit SttWorker(QObject *parent = nullptr) : QObject(parent) {}
+    QString audioPath;
+    Transcriber::Options options;
+
+signals:
+    void progress(float);
+    void done(bool ok, const QList<TranscriptSegment> &segments, const QString &error);
+
+public slots:
+    void run()
+    {
+        QString err;
+        QString lang;
+        QList<TranscriptSegment> segs;
+        const bool ok = Transcriber::transcribe(
+            audioPath, options, segs, &err,
+            [this](float f) { emit progress(f); }, &lang);
+        emit done(ok, segs, err);
+    }
+};
+} // namespace
 
 namespace {
 // One system prompt for every structured task: machine output only.
@@ -138,6 +171,8 @@ void TaskCard::retranslateUi()
         m_title->setText(arenaTr("panel.ai.cuts"));
         m_hint->setText(arenaTr("panel.ai.task.cuts.hint"));
         break;
+    default:
+        break; // Command has no launcher card
     }
     m_run->setText(arenaTr("panel.ai.task.run"));
     if (m_sourceLabel) m_sourceLabel->setText(arenaTr("panel.ai.task.sourceTrack"));
@@ -328,7 +363,38 @@ AiPanel::AiPanel(KiloClient *client, Settings &settings, QWidget *parent)
     m_results->setMaximumHeight(220);
     lay->addWidget(m_results, 1);
 
+    // M7.2: local transcription (whisper.cpp; on-demand model). The
+    // transcript is stored in memory and feeds the feature prompts.
+    m_sttBox = new QGroupBox(arenaTr("panel.ai.stt.title"), this);
+    {
+        auto *gl = new QVBoxLayout(m_sttBox);
+        gl->setContentsMargins(8, 8, 8, 8);
+        gl->setSpacing(4);
+        auto *row = new QHBoxLayout;
+        m_sttModel = new QComboBox;
+        for (const WhisperModelInfo &m : Transcriber::models())
+            m_sttModel->addItem(QStringLiteral("%1 — %2 MB").arg(m.label)
+                                     .arg(int(m.approxBytes / (1024 * 1024))), m.id);
+        m_sttModel->setCurrentIndex(1); // base = default
+        m_sttButton = new QPushButton(arenaTr("panel.ai.stt.button"));
+        m_sttStatus = new QLabel;
+        m_sttStatus->setProperty("role", QStringLiteral("muted"));
+        m_sttStatus->setWordWrap(true);
+        m_sttView = new QPlainTextEdit;
+        m_sttView->setReadOnly(true);
+        m_sttView->setMaximumHeight(96);
+        m_sttView->setPlaceholderText(arenaTr("panel.ai.stt.placeholder"));
+        row->addWidget(new QLabel(arenaTr("panel.ai.stt.model")));
+        row->addWidget(m_sttModel, 1);
+        row->addWidget(m_sttButton);
+        gl->addLayout(row);
+        gl->addWidget(m_sttStatus);
+        gl->addWidget(m_sttView);
+    }
+    lay->addWidget(m_sttBox);
+
     connect(m_enableBtn, &QPushButton::clicked, this, &AiPanel::enableRequested);
+    connect(m_sttButton, &QPushButton::clicked, this, &AiPanel::runSttTranscribe);
     connect(m_askSend, &QPushButton::clicked, this, &AiPanel::ask);
     connect(m_askInput, &QLineEdit::returnPressed, this, &AiPanel::ask);
     refreshStatus();
@@ -352,6 +418,10 @@ void AiPanel::setProject(Project *project)
     const bool changed = (m_project != project);
     m_project = project;
     if (changed) {
+        // The transcript is derived from the project's audio: a different
+        // project invalidates it (it is in-memory, never persisted — D-036).
+        m_sttSegments.clear();
+        m_sttView->clear();
         QList<QPair<QString, QString>> tracks;
         if (project) {
             for (const SubtitleTrack &t : project->subtitleTracks)
@@ -406,6 +476,14 @@ void AiPanel::refreshAvailability()
     m_cardTitles->setAvailable(on && proj, none);
     m_cardCuts->setAvailable(on && proj && cues > 0 && dur > 0 && hasVideoTrack(),
                              !proj ? none : (cues > 0 ? noVideo : noSubs));
+
+    // Local STT: needs the engine (build option) + a project with a clip.
+    const bool sttOk = Transcriber::isAvailable() && proj && hasVideoTrack() &&
+                       !sttSourcePath().isEmpty();
+    m_sttBox->setEnabled(Transcriber::isAvailable() && !m_sttBusy);
+    m_sttButton->setEnabled(sttOk && !m_sttBusy);
+    if (!Transcriber::isAvailable())
+        m_sttStatus->setText(arenaTr("panel.ai.stt.unavailable"));
 }
 
 void AiPanel::retranslateUi()
@@ -417,6 +495,9 @@ void AiPanel::retranslateUi()
     m_enableBtn->setText(arenaTr("panel.ai.enable"));
     m_askInput->setPlaceholderText(arenaTr("panel.ai.ask.placeholder"));
     m_askSend->setText(arenaTr("panel.ai.ask.send"));
+    m_sttBox->setTitle(arenaTr("panel.ai.stt.title"));
+    m_sttButton->setText(arenaTr("panel.ai.stt.button"));
+    m_sttView->setPlaceholderText(arenaTr("panel.ai.stt.placeholder"));
     refreshStatus();
 }
 
@@ -432,6 +513,11 @@ void AiPanel::setEnabledUi(bool enabled)
 
 QStringList AiPanel::transcriptLines() const
 {
+    // M7.2: a local STT transcript (when present) is the primary speech
+    // source for the feature prompts; subtitle cues are the fallback.
+    if (!m_sttSegments.isEmpty())
+        return ::arena::transcriptLines(m_sttSegments,
+                                        m_project ? m_project->fps : 30.0);
     struct Line {
         qint64 frame;
         QString text;
@@ -523,6 +609,9 @@ void AiPanel::runTask(AiTaskType type)
         card->setStatus(arenaTr("panel.ai.streaming"));
         item = new QListWidgetItem;
         break;
+    default:
+        delete card; // Command is driven from the palette, not a card
+        return;
     }
     m_results->addItem(item);
     m_results->setItemWidget(item, card);
@@ -750,9 +839,187 @@ void AiPanel::onCardAccepted(TaskResultCard *card)
     case AiTaskType::Cuts:
         emit cutsAccepted(card->cuts());
         break;
+    case AiTaskType::Command:
+        emit actionsAccepted(card->actions());
+        break;
     }
     card->markApplied(QString());
     m_askSend->setEnabled(m_settings.aiEnabled());
+}
+
+// --- M7.3: NL command bar -----------------------------------------------------
+
+QString AiPanel::commandContext() const
+{
+    QJsonObject ctx;
+    if (!m_project) return QStringLiteral("{}");
+    const double fps = m_project->fps;
+    ctx[QStringLiteral("fps")] = fps;
+    ctx[QStringLiteral("durationFrames")] = timelineDurationFrames();
+    QJsonArray clips;
+    for (const Track &t : m_project->tracks) {
+        if (t.type != TrackType::Video) continue;
+        int i = 0;
+        for (const Clip &c : t.clips) {
+            QJsonObject cj;
+            cj[QStringLiteral("index")] = i;
+            cj[QStringLiteral("startFrame")] = c.offset;
+            cj[QStringLiteral("durationFrames")] = c.duration();
+            clips.append(cj);
+            ++i;
+        }
+        break; // main (first) video track only
+    }
+    ctx[QStringLiteral("mainVideoTrackClips")] = clips;
+    QJsonArray ms;
+    for (const Marker &m : m_project->markers) {
+        QJsonObject mj;
+        mj[QStringLiteral("time")] = m.time;
+        mj[QStringLiteral("label")] = m.label;
+        ms.append(mj);
+    }
+    ctx[QStringLiteral("markers")] = ms;
+    return QString::fromUtf8(QJsonDocument(ctx).toJson(QJsonDocument::Compact));
+}
+
+void AiPanel::runCommand(const QString &text)
+{
+    if (text.trimmed().isEmpty()) return;
+    if (!m_settings.aiEnabled()) {
+        QMessageBox::warning(this, arenaTr("panel.ai"), arenaTr("panel.ai.off.title"));
+        return;
+    }
+    if (!m_project) return;
+    m_askSend->setEnabled(false);
+
+    auto *card = new TaskResultCard;
+    card->setAiTaskType(AiTaskType::Command);
+    card->setTaskTitle(arenaTr("panel.ai.cmd.title"));
+    card->setStatus(arenaTr("panel.ai.streaming"));
+    auto *item = new QListWidgetItem;
+    m_results->addItem(item);
+    m_results->setItemWidget(item, card);
+    const int row = m_results->count() - 1;
+    connect(card, &TaskResultCard::closed, this, [this, row] {
+        if (m_results->count() > row)
+            delete m_results->takeItem(row);
+    });
+    connect(card, &TaskResultCard::accepted, this, [this, card] { onCardAccepted(card); });
+
+    const QString user = aifeatures::actionPrompt(commandContext(), text);
+    m_client->chat(kSystemPrompt, user,
+                   [card](const QString &d) { card->appendStream(d); },
+                   [this, card, user](const QString &full, const QString &err) {
+                       QJsonArray actions;
+                       QString verr;
+                       if (err.isEmpty() && aifeatures::parseActions(full, &actions, &verr)) {
+                           card->setActions(actions);
+                           QString p = arenaTr("panel.ai.cmd.preview",
+                                               {{QStringLiteral("count"),
+                                                 QString::number(actions.size())}});
+                           for (const QJsonValue &v : actions)
+                               p += QStringLiteral("\n  • %1")
+                                        .arg(::arena::aifeatures::actionDescription(
+                                            v.toObject(),
+                                            m_project ? m_project->fps : 30.0,
+                                            [this] {
+                                                int ti = -1;
+                                                for (int i = 0; i < m_project->tracks.size(); ++i)
+                                                    if (m_project->tracks[i].type == TrackType::Video) {
+                                                        ti = i;
+                                                        break;
+                                                    }
+                                                return ti >= 0
+                                                           ? m_project->tracks[ti].clips.size()
+                                                           : 0;
+                                            }()));
+                           card->showPreview(p);
+                           m_askSend->setEnabled(m_settings.aiEnabled());
+                       } else {
+                           invalidateFor(user); // cached bad text blocks re-runs
+                           card->markFailed(err.isEmpty() ? verr : err);
+                           m_askSend->setEnabled(m_settings.aiEnabled());
+                       }
+                   },
+                   aifeatures::kActionsMaxTokens);
+}
+
+// --- M7.2: local STT ----------------------------------------------------------
+
+QString AiPanel::sttSourcePath() const
+{
+    if (!m_project) return QString();
+    for (const Track &t : m_project->tracks) {
+        if (t.type != TrackType::Video || t.clips.isEmpty()) continue;
+        const Clip &c = t.clips.first();
+        QString path = c.sourceRef;
+        if (!m_project->filePath.isEmpty() && !QFileInfo(path).isAbsolute())
+            path = QFileInfo(m_project->filePath).absoluteDir().filePath(path);
+        if (QFileInfo::exists(path))
+            return path;
+        return QString();
+    }
+    return QString();
+}
+
+void AiPanel::runSttTranscribe()
+{
+    if (m_sttBusy || !Transcriber::isAvailable()) return;
+    const QString path = sttSourcePath();
+    if (path.isEmpty()) {
+        m_sttStatus->setText(arenaTr("panel.ai.stt.noAudio"));
+        return;
+    }
+    m_sttBusy = true;
+    m_sttButton->setEnabled(false);
+    m_sttView->clear();
+    m_sttStatus->setText(arenaTr("panel.ai.stt.working"));
+
+    auto *thread = new QThread(this);
+    auto *worker = new SttWorker;
+    worker->audioPath = path;
+    worker->options.model = m_sttModel->currentData().toString();
+    worker->moveToThread(thread);
+    connect(thread, &QThread::started, worker, &SttWorker::run);
+    connect(worker, &SttWorker::progress, this, &AiPanel::onSttProgress);
+    connect(worker, &SttWorker::done, this, [this, thread, worker](bool ok,
+                                                                    const QList<TranscriptSegment> &segs,
+                                                                    const QString &err) {
+        thread->quit();
+        onSttDone(ok, segs, err);
+        worker->deleteLater();
+    });
+    connect(thread, &QThread::finished, worker, &QObject::deleteLater);
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+}
+
+void AiPanel::onSttProgress(float f)
+{
+    if (!m_sttBusy) return;
+    if (f < 1.0)
+        m_sttStatus->setText(
+            arenaTr("panel.ai.stt.progress", {{QStringLiteral("pct"), QString::number(int(f * 100))}}));
+}
+
+void AiPanel::onSttDone(bool ok, const QList<TranscriptSegment> &segs, const QString &err)
+{
+    m_sttBusy = false;
+    m_sttButton->setEnabled(!sttSourcePath().isEmpty());
+    if (!ok) {
+        m_sttStatus->setText(arenaTr("panel.ai.stt.error") + QStringLiteral(": ") + err);
+        return;
+    }
+    m_sttSegments = segs;
+    QStringList lines;
+    for (const TranscriptSegment &seg : segs) {
+        const double fps = m_project ? m_project->fps : 30.0;
+        const qint64 frames = qRound(double(seg.startMs) / 1000.0 * fps);
+        lines << framesToTimecode(frames, fps) + QStringLiteral("  ") + seg.text.trimmed();
+    }
+    m_sttView->setPlainText(lines.join(QStringLiteral("\n")));
+    m_sttStatus->setText(
+        arenaTr("panel.ai.stt.done", {{QStringLiteral("count"), QString::number(segs.size())}}));
 }
 
 // --- free-form ask -----------------------------------------------------------
@@ -802,3 +1069,5 @@ void AiPanel::askText(const QString &text)
 }
 
 } // namespace arena
+
+#include "aipanel.moc"

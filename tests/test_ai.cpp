@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include "aifeatures.h"
+#include "actionvalidator.h"
 #include "prompts.h"
 
 using namespace arena;
@@ -321,4 +322,124 @@ TEST(AiFeatures, PromptBuildersSubstitutePlaceholders)
     EXPECT_EQ(k.indexOf(QStringLiteral("{transcript}")), -1);
     // The frame-field rule is fps-specific (00-24 at 25 fps).
     EXPECT_NE(k.indexOf(QStringLiteral("at 25 fps")), -1);
+}
+
+// --- M7.3: NL command bar (parse + validate actions) -------------------------
+
+TEST(AiFeatures, ActionPromptSubstitutesContextAndRequest)
+{
+    const QString ctx = QStringLiteral(
+        "{\"fps\":30,\"mainVideoTrackClips\":2,\"durationFrames\":1500}");
+    const QString p = aifeatures::actionPrompt(ctx, QStringLiteral("add a fade out to the last clip"));
+    EXPECT_NE(p.indexOf(ctx), -1);
+    EXPECT_NE(p.indexOf(QStringLiteral("add a fade out to the last clip")), -1);
+    EXPECT_EQ(p.indexOf(QStringLiteral("{context}")), -1);
+    EXPECT_EQ(p.indexOf(QStringLiteral("{request}")), -1);
+    // The schema is described so the model emits only valid ops.
+    for (const QString &op : actionValidator::supportedOps())
+        EXPECT_NE(p.indexOf(op), -1) << op.toStdString();
+    EXPECT_NE(p.indexOf(QStringLiteral("fade_to_black")), -1);
+}
+
+TEST(AiFeatures, ParseActionsAcceptsValidArray)
+{
+    const QString raw = kFence.arg(QStringLiteral(
+        "[{\"op\":\"add_transition\",\"target\":{\"type\":\"clip\",\"index\":-1},"
+        "\"transition\":\"fade_to_black\",\"duration_ms\":500}]"));
+    QJsonArray out;
+    QString err;
+    ASSERT_TRUE(aifeatures::parseActions(raw, &out, &err)) << err.toStdString();
+    ASSERT_EQ(out.size(), 1);
+    EXPECT_EQ(out.first().toObject().value(QStringLiteral("transition")).toString(),
+              QStringLiteral("fade_to_black"));
+}
+
+TEST(AiFeatures, ParseActionsAcceptsAllSupportedOps)
+{
+    const QString raw = QStringLiteral(
+        "[{\"op\":\"add_transition\",\"target\":{\"type\":\"clip\",\"index\":0},"
+        "\"transition\":\"cross_dissolve\",\"duration_ms\":800},"
+        "{\"op\":\"set_clip_speed\",\"target\":{\"type\":\"clip\",\"index\":1},\"speed\":1.5},"
+        "{\"op\":\"add_marker\",\"time\":300,\"label\":\"Intro\"},"
+        "{\"op\":\"export\",\"preset\":\"web_720p\",\"subtitles\":\"sidecar\"}]");
+    QJsonArray out;
+    QString err;
+    ASSERT_TRUE(aifeatures::parseActions(raw, &out, &err)) << err.toStdString();
+    EXPECT_EQ(out.size(), 4);
+}
+
+TEST(AiFeatures, ParseActionsRejections)
+{
+    struct Case { QString raw; };
+    const Case cases[] = {
+        // unknown op
+        { QStringLiteral("[{\"op\":\"delete_everything\",\"target\":{\"type\":\"clip\",\"index\":0}}]") },
+        // bad transition
+        { QStringLiteral("[{\"op\":\"add_transition\",\"target\":{\"type\":\"clip\",\"index\":0},"
+                         "\"transition\":\"morph\",\"duration_ms\":500}]") },
+        // speed out of range
+        { QStringLiteral("[{\"op\":\"set_clip_speed\",\"target\":{\"type\":\"clip\",\"index\":0},\"speed\":99}]") },
+        // duration_ms out of range
+        { QStringLiteral("[{\"op\":\"add_transition\",\"target\":{\"type\":\"clip\",\"index\":0},"
+                         "\"transition\":\"wipe\",\"duration_ms\":999999}]") },
+        // missing target index
+        { QStringLiteral("[{\"op\":\"set_clip_speed\",\"target\":{\"type\":\"clip\"},\"speed\":2}]") },
+        // wrong target type
+        { QStringLiteral("[{\"op\":\"add_transition\",\"target\":{\"type\":\"marker\",\"index\":0},"
+                         "\"transition\":\"wipe\"}]") },
+        // bad export preset
+        { QStringLiteral("[{\"op\":\"export\",\"preset\":\"4k_cinema\"}]") },
+        // prose only, no JSON
+        { QStringLiteral("I cannot do that.") },
+    };
+    for (const Case &c : cases) {
+        QJsonArray out;
+        QString err;
+        EXPECT_FALSE(aifeatures::parseActions(c.raw, &out, &err)) << c.raw.toStdString();
+        EXPECT_FALSE(err.isEmpty()) << c.raw.toStdString();
+    }
+}
+
+// A reasoning model may echo a *valid* template array before the real answer;
+// the extractor keeps the LAST parseable candidate, so the echoed template
+// (with placeholder op) must not win.
+TEST(AiFeatures, ParseActionsIgnoresEchoedTemplate)
+{
+    const QString raw = QStringLiteral(
+        "Thinking: the format is [{\"op\":\"add_transition\",\"target\":"
+        "{\"type\":\"clip\",\"index\":0},\"transition\":\"cross_dissolve\","
+        "\"duration_ms\":500}].\n"
+        "Here is the answer:\n"
+        "[{\"op\":\"add_marker\",\"time\":60,\"label\":\"End\"}]");
+    QJsonArray out;
+    QString err;
+    ASSERT_TRUE(aifeatures::parseActions(raw, &out, &err)) << err.toStdString();
+    ASSERT_EQ(out.size(), 1);
+    EXPECT_EQ(out.first().toObject().value(QStringLiteral("op")).toString(),
+              QStringLiteral("add_marker"));
+}
+
+// Live finding (2026-10-14, recorded M7 session): a reasoning model echoed a
+// HALF-WRITTEN template in its chain-of-thought — a '[' that is never closed
+// ("...\"duration_ms\":???}"). The old extractor aborted the scan at the
+// first unbalanced candidate and never saw the real (balanced) answer array
+// that followed.
+TEST(AiFeatures, ParseActionsSurvivesUnbalancedEcho)
+{
+    const QString raw = QStringLiteral(
+        "So the action is "
+        "[{\"op\":\"add_transition\",\"target\":{\"type\":\"clip\",\"index\":-1},"
+        "\"transition\":\"fade_to_black\",\"duration_ms\":???} . "
+        "Let's just output it: "
+        "[{\"op\":\"add_transition\",\"target\":{\"type\":\"clip\",\"index\":-1},"
+        "\"transition\":\"fade_to_black\",\"duration_ms\":500}]");
+    QJsonArray out;
+    QString err;
+    ASSERT_TRUE(aifeatures::parseActions(raw, &out, &err)) << err.toStdString();
+    ASSERT_EQ(out.size(), 1);
+    EXPECT_EQ(out.first().toObject().value(QStringLiteral("transition")).toString(),
+              QStringLiteral("fade_to_black"));
+    EXPECT_EQ(out.first().toObject().value(QStringLiteral("target")).toObject()
+                  .value(QStringLiteral("index")).toInt(),
+              -1);
 }

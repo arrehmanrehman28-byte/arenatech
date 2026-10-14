@@ -1,5 +1,6 @@
 #include "whisper.h"
 #include "logger.h"
+#include "util.h"
 #include "media.h"
 
 #ifdef ARENA_ENABLE_WHISPER
@@ -403,6 +404,20 @@ bool Transcriber::transcribe(const QString &audioPath, const Options &opts,
         *error = QObject::tr("whisper.cpp is not compiled into this build (enable ARENA_ENABLE_WHISPER)");
     return false;
 #endif
+}
+
+QStringList transcriptLines(const QList<TranscriptSegment> &segments, double fps)
+{
+    const double rate = fps > 0.0 ? fps : 30.0;
+    QStringList out;
+    for (const TranscriptSegment &seg : segments) {
+        const QString text = seg.text.trimmed();
+        if (text.isEmpty())
+            continue;
+        const qint64 frames = qRound(double(seg.startMs) / 1000.0 * rate);
+        out << framesToTimecode(frames, rate) + QLatin1Char(' ') + text;
+    }
+    return out;
 }
 
 } // namespace arena

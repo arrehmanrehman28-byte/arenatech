@@ -241,3 +241,34 @@ TEST(Stt, TranscribeJfkFixture)
     qInfo() << "STT(" << model << "):" << out.size() << "segments in"
             << elapsedMs << "ms —" << allText.trimmed();
 }
+
+// M7.2: transcript segments -> prompt lines (pure formatter used by the
+// AI panel to feed local STT output into the feature prompts).
+TEST(Stt, TranscriptLinesFormat)
+{
+    QList<TranscriptSegment> segs;
+    TranscriptSegment s1;
+    s1.startMs = 0;
+    s1.endMs = 1500;
+    s1.text = "And so my fellow";
+    TranscriptSegment s2;
+    s2.startMs = 1533; // 0.511 s -> frame 46 at 30 fps (1 s + 16)
+    s2.endMs = 4000;
+    s2.text = " Americans, ask not.";
+    TranscriptSegment empty;
+    empty.startMs = 5000;
+    empty.endMs = 6000;
+    empty.text = "   ";
+    segs = {s1, s2, empty};
+
+    const QStringList lines = transcriptLines(segs, 30.0);
+    ASSERT_EQ(lines.size(), 2); // whitespace-only segments dropped
+    EXPECT_EQ(lines[0], QStringLiteral("00:00:00:00 And so my fellow"));
+    EXPECT_EQ(lines[1], QStringLiteral("00:00:01:16 Americans, ask not.")); // 46 frames = 1s + 16
+
+    // fps=25: 1533 ms -> 38 frames = 1 s + 13 frames
+    const QStringList l25 = transcriptLines(segs, 25.0);
+    EXPECT_EQ(l25[1], QStringLiteral("00:00:01:13 Americans, ask not."));
+
+    EXPECT_TRUE(transcriptLines({}, 30.0).isEmpty());
+}

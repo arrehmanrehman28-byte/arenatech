@@ -10,6 +10,8 @@
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QKeyEvent>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPixmap>
@@ -589,6 +591,105 @@ int main(int argc, char **argv)
         w.project()->subtitleTracks.clear();
         w.subtitles()->setProject(w.project());
         spin(50);
+    }
+
+    // --- M7: NL command bar (validated preview -> undoable apply) ------------
+    // applyAiActions is the same public method the command preview card's
+    // Accept emits into; it applies a *validated* action list. The response
+    // shapes below are exactly what the model must emit for "add a fade out
+    // to the last clip" / "speed up" / "add a marker" (aifeatures::
+    // parseActions is what validated them upstream).
+    if (w.project()) {
+        Track *v1 = nullptr;
+        for (Track &t : w.project()->tracks)
+            if (t.type == TrackType::Video) { v1 = &t; break; }
+        check(v1 && v1->clips.size() == 1, "M7: one clip on V1");
+        if (v1 && v1->clips.size() == 1) {
+            const double fps = w.project()->fps;
+            const Clip c0 = v1->clips[0]; // snapshot
+
+            // 1) Acceptance: "add a fade out to the last clip" (-1 = last).
+            const QJsonArray fadeOut = QJsonDocument::fromJson(
+                QStringLiteral("[{\"op\":\"add_transition\",\"target\":{\"type\":\"clip\",\"index\":-1},"
+                                "\"transition\":\"fade_to_black\",\"duration_ms\":500}]").toUtf8())
+                .array();
+            check(w.applyAiActions(fadeOut) == 1, "M7: fade-out action applied (1)");
+            spin(20);
+            check(v1->clips.size() == 1, "M7: fade does not change clip count");
+            if (v1->clips.size() == 1) {
+                const QJsonObject tr =
+                    v1->clips.last().effects.value(QStringLiteral("transition")).toObject();
+                check(tr.value(QStringLiteral("type")).toString() == QLatin1String("fade_to_black"),
+                      "M7: last clip carries fade_to_black");
+                check(tr.value(QStringLiteral("duration")).toInt() ==
+                          int(qRound(0.5 * fps)),
+                      "M7: transition duration is 0.5 s in frames");
+                // The compositor must actually render it: the clip's final
+                // frame is the fully-blended black end of the fade.
+                w.seekToFrame(c0.offset + c0.duration() - 1);
+                for (int i = 0; i < 30; ++i) spin(50);
+                w.applyPlaybackResolution();
+                const QImage fadeFrame = w.previewImage();
+                check(!fadeFrame.isNull(), "M7: fading frame renders");
+                if (!fadeFrame.isNull()) {
+                    int blackish = 0, total = 0;
+                    for (int y = 0; y < fadeFrame.height(); y += 8)
+                        for (int x = 0; x < fadeFrame.width(); x += 8) {
+                            const QRgb px = fadeFrame.pixel(x, y);
+                            if (qRed(px) < 40 && qGreen(px) < 40 && qBlue(px) < 40) ++blackish;
+                            ++total;
+                        }
+                    check(total > 0 && blackish * 100 / total > 90,
+                          "M7: last frame is (near-)black from the fade");
+                }
+            }
+            w.undo();
+            spin(20);
+            check(v1->clips.size() == 1 &&
+                      v1->clips.last().effects.value(QStringLiteral("transition")).toObject().isEmpty(),
+                  "M7: undo removes the fade");
+
+            // 2) An unapplicable/unknown op list applies nothing (the panel
+            // rejects it before this point; defense in depth here).
+            const QJsonArray bad = QJsonDocument::fromJson(
+                QStringLiteral("[{\"op\":\"launch_rocket\"}]").toUtf8()).array();
+            check(w.applyAiActions(bad) == 0, "M7: unknown op applies nothing");
+
+            // 3) Speed action on the (only) clip; undo restores 1.0x.
+            const QJsonArray speed = QJsonDocument::fromJson(
+                QStringLiteral("[{\"op\":\"set_clip_speed\",\"target\":{\"type\":\"clip\",\"index\":0},"
+                                "\"speed\":1.5}]").toUtf8())
+                .array();
+            check(w.applyAiActions(speed) == 1, "M7: speed action applied (1)");
+            spin(20);
+            check(v1->clips.size() == 1 && v1->clips.last().speed == 1.5,
+                  "M7: clip speed is 1.5x");
+            w.undo();
+            spin(20);
+            check(v1->clips.size() == 1 && v1->clips.last().speed == c0.speed,
+                  "M7: undo restores original speed");
+
+            // 4) Labeled marker; undo removes it.
+            const int markers0 = w.project()->markers.size();
+            const QJsonArray marker = QJsonDocument::fromJson(
+                QStringLiteral("[{\"op\":\"add_marker\",\"time\":30,\"label\":\"M7 smoke\"}]").toUtf8())
+                .array();
+            check(w.applyAiActions(marker) == 1, "M7: marker action applied (1)");
+            spin(20);
+            check(w.project()->markers.size() == markers0 + 1 &&
+                      w.project()->markers.last().label == QLatin1String("M7 smoke"),
+                  "M7: labeled marker added");
+            w.undo();
+            spin(20);
+            check(w.project()->markers.size() == markers0, "M7: undo removes the marker");
+
+            // 5) Out-of-range clip index is skipped, not applied.
+            const QJsonArray oob = QJsonDocument::fromJson(
+                QStringLiteral("[{\"op\":\"set_clip_speed\",\"target\":{\"type\":\"clip\",\"index\":7},"
+                                "\"speed\":2}]").toUtf8())
+                .array();
+            check(w.applyAiActions(oob) == 0, "M7: out-of-range index applies nothing");
+        }
     }
 
     // Give background workers (export worker thread, proxy encoder) a moment

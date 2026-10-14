@@ -142,7 +142,14 @@ QJsonArray extractJsonArray(const QString &rawModelText)
                 }
             }
         }
-        if (end < 0) break; // unbalanced — no more candidates
+        if (end < 0) {
+            // Unbalanced candidate — usually a chain-of-thought template
+            // echo that the model left half-written ("...duration_ms":???}).
+            // Keep scanning from the next '['; the real answer (a balanced
+            // array) usually comes after it.
+            from = start + 1;
+            continue;
+        }
         QJsonParseError pe{};
         const QJsonDocument doc =
             QJsonDocument::fromJson(rawModelText.mid(start, end - start + 1).toUtf8(), &pe);

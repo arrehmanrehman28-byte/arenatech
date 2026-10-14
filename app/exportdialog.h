@@ -44,6 +44,10 @@ public:
     QLineEdit *dirEditForTest() const { return m_dirEdit; }
     void startForTest(); // same as the Start button
 
+    // Select a single preset (NL command bar "export" action): unchecks
+    // the others and checks this one. Unknown names are ignored.
+    void preselectPreset(const QString &presetName);
+
 protected:
     void closeEvent(QCloseEvent *ev) override;
 

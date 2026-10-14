@@ -15,11 +15,15 @@
 #include <QEventLoop>
 #include <QSettings>
 #include <QTemporaryDir>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTextStream>
 #include <QTimer>
 #include <QVector>
 
 #include "aifeatures.h"
+#include "i18n.h"
 #include "kilogateway.h"
 #include "project.h"
 #include "settings.h"
@@ -139,7 +143,14 @@ int main(int argc, char **argv)
     const QString modelId =
         argc > 1 ? QString::fromLocal8Bit(argv[1])
                  : QStringLiteral("nvidia/nemotron-3-super-120b-a12b:free");
+    const bool nlOnly = argc > 2 && QString::fromLocal8Bit(argv[2]) == "nl";
 
+#ifdef ARENA_I18N_DIR
+    { // translatable action descriptions in the record (English)
+        QString i18nError;
+        I18n::instance().loadDirectory(QStringLiteral(ARENA_I18N_DIR), &i18nError);
+    }
+#endif
     Settings &settings = Settings::instance();
     settings.setAiEnabled(true);
     settings.setAiPrivacyAccepted();
@@ -264,164 +275,251 @@ int main(int argc, char **argv)
         if (!ok) g_anyFailed = true;
     };
 
-    // --- task 1: smart title + description ----------------------------------
-    out << "\n## Task 1 — smart title & description\n";
-    {
-        const QString context = QStringLiteral(
-            "Project name: The Perfect Cup of Tea (AI Demo)\n"
-            "Duration: %1 s\nResolution: 1920x1080 @ 30 fps\n"
-            "Captions (first 20 lines):\n%2")
-                                    .arg(QString::number(durationSec, 'f', 1))
-                                    .arg(transcript.mid(0, 20).join('\n'));
-        const RunResult r = runChat(aifeatures::titlePrompt(context),
-                                    "### Title (1 request)", aifeatures::kTitleMaxTokens);
-        if (r.error.isEmpty()) {
-            logRaw(r.full);
-            TitleResult t;
-            QString verr;
-            const bool ok = aifeatures::parseTitle(r.full, &t, &verr);
-            mark(ok, QStringLiteral("parsed in %1 ms").arg(r.elapsedMs) +
-                        (ok ? QString() : " — " + verr));
-            if (ok) {
-                out << "- title (" << t.title.size() << " chars): \"" << t.title
-                    << "\"\n";
-                out << "- description (" << t.description.size()
-                    << " chars): \"" << shortText(t.description, 200) << "\"\n";
-            }
-        } else {
-            mark(false, "request failed");
-        }
-    }
-
-    // --- task 2: chapters -----------------------------------------------------
-    out << "\n## Task 2 — chapters\n";
-    {
-        const RunResult r = runChat(aifeatures::chaptersPrompt(transcriptText),
-                                    "### Chapters (1 request)",
-                                    aifeatures::kChaptersMaxTokens);
-        if (r.error.isEmpty()) {
-            logRaw(r.full);
-            QVector<ChapterSuggestion> ch;
-            QString verr;
-            const bool ok = aifeatures::parseChapters(r.full, durationSec, &ch, &verr);
-            mark(ok, QStringLiteral("parsed in %1 ms").arg(r.elapsedMs) +
-                        (ok ? QString() : " — " + verr));
-            if (ok)
-                for (const ChapterSuggestion &c : ch)
-                    out << "- " << framesToTimecode(qRound(c.startSec * fps), fps)
-                        << "  " << c.title << "\n";
-        } else {
-            mark(false, "request failed");
-        }
-    }
-
-    // --- task 3: subtitle translation (batches of ~40) -------------------------
-    out << "\n## Task 3 — subtitle translation to Spanish (batches of "
-        << aifeatures::kTranslateBatchSize << ")\n";
-    {
-        const int n = cues.size();
-        const QVector<QPair<int, int>> ranges = aifeatures::batchRanges(n);
-        out << "- " << n << " entries → " << ranges.size() << " batches\n";
-        QStringList results;
-        results.resize(n);
-        bool allOk = true;
-        for (int bi = 0; bi < ranges.size(); ++bi) {
-            const int first = ranges[bi].first;
-            const int last = ranges[bi].second;
-            QVector<QJsonObject> entries;
-            for (int i = first; i < last; ++i) {
-                QJsonObject o;
-                o[QStringLiteral("index")] = i;
-                o[QStringLiteral("start")] =
-                    framesToTimecode(qRound(cues[i].startSec * fps), fps);
-                o[QStringLiteral("end")] = framesToTimecode(qRound(cues[i].endSec * fps),
-                                                            fps);
-                o[QStringLiteral("text")] = cues[i].text;
-                entries.append(o);
-            }
-            const RunResult r = runChat(aifeatures::translatePrompt(entries, "es"),
-                                        QStringLiteral("### Batch %1/%2 (entries %3–%4)")
-                                            .arg(bi + 1)
-                                            .arg(ranges.size())
-                                            .arg(first + 1)
-                                            .arg(last),
-                                        aifeatures::kTranslateBatchMaxTokens);
+    if (!nlOnly) {
+        // --- task 1: smart title + description ----------------------------------
+        if (nlOnly) out << "\n(tasks 1-4 skipped: nl-only mode)\n";
+        out << "\n## Task 1 — smart title & description\n";
+        {
+            const QString context = QStringLiteral(
+                "Project name: The Perfect Cup of Tea (AI Demo)\n"
+                "Duration: %1 s\nResolution: 1920x1080 @ 30 fps\n"
+                "Captions (first 20 lines):\n%2")
+                                        .arg(QString::number(durationSec, 'f', 1))
+                                        .arg(transcript.mid(0, 20).join('\n'));
+            const RunResult r = runChat(aifeatures::titlePrompt(context),
+                                        "### Title (1 request)", aifeatures::kTitleMaxTokens);
             if (r.error.isEmpty()) {
-                logRaw(r.full, bi == 0 ? QStringLiteral("full text")
-                                       : QStringLiteral("summarized in docs"));
-                QStringList batch;
+                logRaw(r.full);
+                TitleResult t;
                 QString verr;
-                const bool ok = aifeatures::parseTranslation(r.full, last - first, &batch,
-                                                             &verr);
-                mark(ok, QStringLiteral("batch %1 parsed in %2 ms").arg(bi + 1).arg(r.elapsedMs) +
+                const bool ok = aifeatures::parseTitle(r.full, &t, &verr);
+                mark(ok, QStringLiteral("parsed in %1 ms").arg(r.elapsedMs) +
                             (ok ? QString() : " — " + verr));
                 if (ok) {
-                    for (int i = 0; i < batch.size() && first + i < n; ++i)
-                        results[first + i] = batch[i];
-                } else {
-                    // Retry the failed batch once (app behavior). Drop the
-                    // cached (unparseable) response first, or the retry is
-                    // served from cache and fails identically.
-                    out << "- retrying batch " << bi + 1 << " once…\n";
-                    client.invalidateCache(kSystem, aifeatures::translatePrompt(entries, "es"));
-                    const RunResult r2 = runChat(aifeatures::translatePrompt(entries, "es"),
-                                                 QStringLiteral("### Batch %1/%2 retry")
-                                                     .arg(bi + 1)
-                                                     .arg(ranges.size()),
-                                                 aifeatures::kTranslateBatchMaxTokens);
-                    QStringList batch2;
-                    QString verr2;
-                    const bool ok2 =
-                        aifeatures::parseTranslation(r2.full, last - first, &batch2, &verr2);
-                    mark(ok2, QStringLiteral("batch %1 retry parsed in %2 ms")
-                                  .arg(bi + 1)
-                                  .arg(r2.elapsedMs) + (ok2 ? QString() : " — " + verr2));
-                    if (ok2) {
-                        for (int i = 0; i < batch2.size() && first + i < n; ++i)
-                            results[first + i] = batch2[i];
-                    } else {
-                        allOk = false;
-                    }
+                    out << "- title (" << t.title.size() << " chars): \"" << t.title
+                        << "\"\n";
+                    out << "- description (" << t.description.size()
+                        << " chars): \"" << shortText(t.description, 200) << "\"\n";
                 }
             } else {
-                allOk = false;
-                mark(false, QStringLiteral("batch %1 request failed").arg(bi + 1));
+                mark(false, "request failed");
             }
         }
-        if (allOk) {
-            int sample = 0;
-            for (int i = 0; i < n && sample < 5; ++i) {
-                out << "- line " << i + 1 << ": \"" << cues[i].text << "\" → \""
-                    << results[i] << "\"\n";
-                ++sample;
+
+        // --- task 2: chapters -----------------------------------------------------
+        out << "\n## Task 2 — chapters\n";
+        {
+            const RunResult r = runChat(aifeatures::chaptersPrompt(transcriptText),
+                                        "### Chapters (1 request)",
+                                        aifeatures::kChaptersMaxTokens);
+            if (r.error.isEmpty()) {
+                logRaw(r.full);
+                QVector<ChapterSuggestion> ch;
+                QString verr;
+                const bool ok = aifeatures::parseChapters(r.full, durationSec, &ch, &verr);
+                mark(ok, QStringLiteral("parsed in %1 ms").arg(r.elapsedMs) +
+                            (ok ? QString() : " — " + verr));
+                if (ok)
+                    for (const ChapterSuggestion &c : ch)
+                        out << "- " << framesToTimecode(qRound(c.startSec * fps), fps)
+                            << "  " << c.title << "\n";
+            } else {
+                mark(false, "request failed");
             }
-            out << "- … (" << n << " lines total, all validated non-empty)\n";
         }
+
+        // --- task 3: subtitle translation (batches of ~40) -------------------------
+        out << "\n## Task 3 — subtitle translation to Spanish (batches of "
+            << aifeatures::kTranslateBatchSize << ")\n";
+        {
+            const int n = cues.size();
+            const QVector<QPair<int, int>> ranges = aifeatures::batchRanges(n);
+            out << "- " << n << " entries → " << ranges.size() << " batches\n";
+            QStringList results;
+            results.resize(n);
+            bool allOk = true;
+            for (int bi = 0; bi < ranges.size(); ++bi) {
+                const int first = ranges[bi].first;
+                const int last = ranges[bi].second;
+                QVector<QJsonObject> entries;
+                for (int i = first; i < last; ++i) {
+                    QJsonObject o;
+                    o[QStringLiteral("index")] = i;
+                    o[QStringLiteral("start")] =
+                        framesToTimecode(qRound(cues[i].startSec * fps), fps);
+                    o[QStringLiteral("end")] = framesToTimecode(qRound(cues[i].endSec * fps),
+                                                                fps);
+                    o[QStringLiteral("text")] = cues[i].text;
+                    entries.append(o);
+                }
+                const RunResult r = runChat(aifeatures::translatePrompt(entries, "es"),
+                                            QStringLiteral("### Batch %1/%2 (entries %3–%4)")
+                                                .arg(bi + 1)
+                                                .arg(ranges.size())
+                                                .arg(first + 1)
+                                                .arg(last),
+                                            aifeatures::kTranslateBatchMaxTokens);
+                if (r.error.isEmpty()) {
+                    logRaw(r.full, bi == 0 ? QStringLiteral("full text")
+                                           : QStringLiteral("summarized in docs"));
+                    QStringList batch;
+                    QString verr;
+                    const bool ok = aifeatures::parseTranslation(r.full, last - first, &batch,
+                                                                 &verr);
+                    mark(ok, QStringLiteral("batch %1 parsed in %2 ms").arg(bi + 1).arg(r.elapsedMs) +
+                                (ok ? QString() : " — " + verr));
+                    if (ok) {
+                        for (int i = 0; i < batch.size() && first + i < n; ++i)
+                            results[first + i] = batch[i];
+                    } else {
+                        // Retry the failed batch once (app behavior). Drop the
+                        // cached (unparseable) response first, or the retry is
+                        // served from cache and fails identically.
+                        out << "- retrying batch " << bi + 1 << " once…\n";
+                        client.invalidateCache(kSystem, aifeatures::translatePrompt(entries, "es"));
+                        const RunResult r2 = runChat(aifeatures::translatePrompt(entries, "es"),
+                                                     QStringLiteral("### Batch %1/%2 retry")
+                                                         .arg(bi + 1)
+                                                         .arg(ranges.size()),
+                                                     aifeatures::kTranslateBatchMaxTokens);
+                        QStringList batch2;
+                        QString verr2;
+                        const bool ok2 =
+                            aifeatures::parseTranslation(r2.full, last - first, &batch2, &verr2);
+                        mark(ok2, QStringLiteral("batch %1 retry parsed in %2 ms")
+                                      .arg(bi + 1)
+                                      .arg(r2.elapsedMs) + (ok2 ? QString() : " — " + verr2));
+                        if (ok2) {
+                            for (int i = 0; i < batch2.size() && first + i < n; ++i)
+                                results[first + i] = batch2[i];
+                        } else {
+                            allOk = false;
+                        }
+                    }
+                } else {
+                    allOk = false;
+                    mark(false, QStringLiteral("batch %1 request failed").arg(bi + 1));
+                }
+            }
+            if (allOk) {
+                int sample = 0;
+                for (int i = 0; i < n && sample < 5; ++i) {
+                    out << "- line " << i + 1 << ": \"" << cues[i].text << "\" → \""
+                        << results[i] << "\"\n";
+                    ++sample;
+                }
+                out << "- … (" << n << " lines total, all validated non-empty)\n";
+            }
+        }
+
+        // --- task 4: cut suggestions ---------------------------------------------
+        out << "\n## Task 4 — cut suggestions\n";
+        {
+            const RunResult r = runChat(aifeatures::cutsPrompt(transcriptText, silenceMap, fps),
+                                        "### Cuts (1 request)", aifeatures::kCutsMaxTokens);
+            if (r.error.isEmpty()) {
+                logRaw(r.full);
+                QVector<CutSuggestion> cuts;
+                QString verr;
+                const bool ok = aifeatures::parseCuts(r.full, durationSec, fps, &cuts, &verr);
+                mark(ok, QStringLiteral("parsed in %1 ms").arg(r.elapsedMs) +
+                            (ok ? QString() : " — " + verr));
+                if (ok)
+                    for (const CutSuggestion &c : cuts)
+                        out << "- "
+                            << framesToTimecode(qRound(c.startSec * fps), fps) << " → "
+                            << framesToTimecode(qRound(c.endSec * fps), fps) << "  "
+                            << c.reason << " (" << QString::number(int(c.confidence * 100))
+                            << "%)\n";
+                if (cuts.isEmpty())
+                    out << "- (no cuts suggested)\n";
+            } else {
+                mark(false, "request failed");
+            }
+        }
+
     }
 
-    // --- task 4: cut suggestions ---------------------------------------------
-    out << "\n## Task 4 — cut suggestions\n";
+    // --- task 5: NL command bar (strict JSON action schema) ------------------
+    // Same context shape + validator the app uses (AiPanel::commandContext /
+    // aifeatures::parseActions). The synthetic project is the two-clip cut of
+    // this session (cut at 30 s = frame 900).
+    out << "\n## Task 5 — NL command bar (3 requests)\n";
     {
-        const RunResult r = runChat(aifeatures::cutsPrompt(transcriptText, silenceMap, fps),
-                                    "### Cuts (1 request)", aifeatures::kCutsMaxTokens);
-        if (r.error.isEmpty()) {
+        const qint64 durationFrames = qRound(durationSec * fps);
+        QJsonObject ctx;
+        ctx[QStringLiteral("fps")] = fps;
+        ctx[QStringLiteral("durationFrames")] = durationFrames;
+        QJsonArray clips;
+        for (const auto &seg : { QPair<qint64, qint64>{0, 900},
+                                 QPair<qint64, qint64>{900, durationFrames - 900} }) {
+            QJsonObject cj;
+            cj[QStringLiteral("index")] = clips.size();
+            cj[QStringLiteral("startFrame")] = seg.first;
+            cj[QStringLiteral("durationFrames")] = seg.second;
+            clips.append(cj);
+        }
+        ctx[QStringLiteral("mainVideoTrackClips")] = clips;
+        ctx[QStringLiteral("markers")] = QJsonArray();
+        const QString ctxText =
+            QString::fromUtf8(QJsonDocument(ctx).toJson(QJsonDocument::Compact));
+
+        struct NlCase {
+            QString request;
+            QString expectedOp;
+            int expectedIndex; // -2 = not asserted
+        };
+        const QVector<NlCase> cases = {
+            { QStringLiteral("Add a fade out to the last clip"),
+              QStringLiteral("add_transition"), -1 },
+            { QStringLiteral("Make the first clip play at 1.5x speed"),
+              QStringLiteral("set_clip_speed"), 0 },
+            { QStringLiteral("Add a marker labeled \"Tea tips\" at 12 seconds"),
+              QStringLiteral("add_marker"), -2 },
+        };
+        for (int i = 0; i < cases.size(); ++i) {
+            const NlCase &c = cases[i];
+            out << "\n### NL command " << (i + 1) << ": \"" << c.request << "\"\n";
+            const RunResult r =
+                runChat(aifeatures::actionPrompt(ctxText, c.request),
+                        QStringLiteral("### NL command %1").arg(i + 1),
+                        aifeatures::kActionsMaxTokens);
+            if (!r.error.isEmpty()) {
+                mark(false, "request failed: " + r.error);
+                continue;
+            }
             logRaw(r.full);
-            QVector<CutSuggestion> cuts;
+            QJsonArray actions;
             QString verr;
-            const bool ok = aifeatures::parseCuts(r.full, durationSec, fps, &cuts, &verr);
-            mark(ok, QStringLiteral("parsed in %1 ms").arg(r.elapsedMs) +
+            const bool ok = aifeatures::parseActions(r.full, &actions, &verr);
+            mark(ok, QStringLiteral("validated in %1 ms").arg(r.elapsedMs) +
                         (ok ? QString() : " — " + verr));
-            if (ok)
-                for (const CutSuggestion &c : cuts)
+            if (ok) {
+                bool opOk = false;
+                int idxOk = 1;
+                for (const QJsonValue &v : actions) {
+                    const QJsonObject a = v.toObject();
+                    const QString desc =
+                        aifeatures::actionDescription(a, fps, 2);
                     out << "- "
-                        << framesToTimecode(qRound(c.startSec * fps), fps) << " → "
-                        << framesToTimecode(qRound(c.endSec * fps), fps) << "  "
-                        << c.reason << " (" << QString::number(int(c.confidence * 100))
-                        << "%)\n";
-            if (cuts.isEmpty())
-                out << "- (no cuts suggested)\n";
-        } else {
-            mark(false, "request failed");
+                        << (desc.isEmpty()
+                                ? QString::fromUtf8(
+                                      QJsonDocument(a).toJson(QJsonDocument::Compact))
+                                : desc)
+                        << "\n";
+                    if (a.value(QStringLiteral("op")).toString() == c.expectedOp)
+                        opOk = true;
+                    if (c.expectedIndex >= 0) {
+                        const int idx = static_cast<int>(a
+                            .value(QStringLiteral("target")).toObject()
+                            .value(QStringLiteral("index")).toDouble(0));
+                        if (idx != c.expectedIndex) idxOk = 0;
+                    }
+                }
+                if (!opOk) mark(false, "expected op '" + c.expectedOp + "' not found");
+                if (c.expectedIndex >= 0 && !idxOk)
+                    mark(false, "expected clip index " + QString::number(c.expectedIndex));
+            }
         }
     }
 

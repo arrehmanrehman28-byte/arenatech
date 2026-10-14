@@ -8,6 +8,7 @@
 // Batch policy (spec): translation runs in batches of ~40 entries; a
 // failed batch is retried once and only the still-failed batch is kept
 // out — valid batches are never re-sent.
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QPair>
 #include <QVector>
@@ -46,6 +47,7 @@ constexpr int kTitleMaxTokens = 2000;
 constexpr int kChaptersMaxTokens = 4000;
 constexpr int kTranslateBatchMaxTokens = 6000;
 constexpr int kCutsMaxTokens = 4000;
+constexpr int kActionsMaxTokens = 3000; // NL command: short answers, CoT headroom
 constexpr int kMinChapters = 3;
 constexpr int kMaxChapters = 10;
 constexpr int kMaxCuts = 20;
@@ -78,8 +80,21 @@ bool parseTitle(const QString &raw, TitleResult *out, QString *err);
 bool parseCuts(const QString &raw, double durationSec, double fps,
                QVector<CutSuggestion> *out, QString *err);
 
+// NL command bar: parse + validate a model response into an action list
+// (extractJsonArray: last valid balanced candidate wins; validateActions:
+// strict schema). *out receives the validated actions; *err the first
+// validation error (human-readable).
+bool parseActions(const QString &raw, QJsonArray *out, QString *err);
+
+// One translatable preview line for a validated action (the NL preview
+// card + the apply status message). clipCount = main video track clips
+// (0 when none); index -1 means the last clip. Empty when the action
+// cannot be described (unknown op / index out of range).
+QString actionDescription(const QJsonObject &action, double fps, int clipCount);
+
 // Prompt builders: fill the templates from prompts.h (placeholders only —
 // never concatenate translated fragments here; these are machine prompts).
+QString actionPrompt(const QString &projectContext, const QString &request);
 QString translatePrompt(const QVector<QJsonObject> &entries, const QString &targetLang);
 QString chaptersPrompt(const QString &transcriptLines);
 QString titlePrompt(const QString &context);

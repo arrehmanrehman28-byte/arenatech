@@ -16,7 +16,7 @@ Status legend: `not started` / `in progress` / `verified` (build + tests green, 
 | M4 | Export | Presets, hardware encode with software fallback, batch queue with progress/ETA/cancel | verified (MOV/ProRes, WAV → M8) |
 | M5 | Subtitles | SRT/VTT/ASS import-export, multi-language tracks (BCP-47), burn-in, RTL, font fallback, reading-speed checks | verified (ASS style round-trip, per-track styling → M8) |
 | M6 | Kilo Gateway | Streaming client (verified against live gateway), subtitle translation, chapters, titles, cut suggestions, AI panel, budget, cache | verified (NL command bar → M7) |
-| M7 | Smart features | whisper.cpp transcription, edit suggestions from transcript + silence map, NL command bar (`/ai`) | in progress (M7.1 STT verified) |
+| M7 | Smart features | whisper.cpp transcription, edit suggestions from transcript + silence map, NL command bar (`/ai`) | verified |
 | M8 | Polish | Onboarding tour, empty states, motion, accessibility audit, DPI 100–300 %, performance tuning | not started |
 | M9 | Release | Portable .exe, Inno Setup installer, code-signing hook, benchmark report, docs final, release checklist | not started |
 
@@ -94,7 +94,8 @@ Status legend: `not started` / `in progress` / `verified` (build + tests green, 
 ### M7 — Smart features
 - whisper.cpp (tiny/base/small on demand, CPU default, CUDA/Vulkan optional) with word-level timestamps; transcript feeds M6 features (text only ever leaves the machine); edit suggestions from transcript + silence map; NL command bar with strict JSON action schema, preview + confirmation, all actions undoable.
 - Exit: transcription of bundled sample clip < 60 s on 4-core CPU; NL "add a fade-out to the last clip" → validated preview → undoable apply (test).
-- **M7.1 (2026-10-14): STT engine verified** — vendored whisper.cpp v1.9.5 (CPU, static), on-demand SHA-256-pinned model download, `Transcriber` returns segment + word timestamps, `ARENA_ENABLE_WHISPER` option, `Stt.TranscribeJfkFixture` test, `tools/arena_stt_check`. Acceptance "bundled clip < 60 s on 4-core CPU" met (≈1.5 s tiny / ≈3.0 s base on a 2-core box). Decisions D-032…D-035. Remaining: M7.2 (transcript → features), M7.3 (NL command bar).
+- **M7.1 (2026-10-14): STT engine verified** — vendored whisper.cpp v1.9.5 (CPU, static), on-demand SHA-256-pinned model download, `Transcriber` returns segment + word timestamps, `ARENA_ENABLE_WHISPER` option, `Stt.TranscribeJfkFixture` test, `tools/arena_stt_check`. Acceptance "bundled clip < 60 s on 4-core CPU" met (≈1.5 s tiny / ≈3.0 s base on a 2-core box). Decisions D-032…D-035.
+- **M7.2/M7.3 (2026-10-14): verified** — local transcript feeds the cut/chapter/title prompts (AI-panel STT section, worker-thread transcription, in-memory per project — D-036); palette `/ai` = NL command bar: schema prompt with machine project context → strict validation → translatable preview → one undoable command per action (D-037/D-038); `export` opens the dialog, never auto-runs. Acceptance "add a fade out to the last clip → validated preview → undoable apply" covered by guismoke (incl. the rendered near-black final frame), unit tests, and a recorded live session (AI_INTEGRATION.md §9). 110/110 ctest, 0 warnings. Decisions D-036…D-038. **M7 complete — both exit criteria met.**
 
 ### M8 — Polish
 - 60 s first-run tour (skip/replay), bundled sample project, contextual tips; full keyboard nav + focus rings + UIA names; WCAG AA high-contrast; DPI 100–300 %; font-size scaling; reduce-motion respected.
