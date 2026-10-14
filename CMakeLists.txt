@@ -2,7 +2,8 @@
 # Professional, lightweight, multi-language video editor for Windows 10/11 (64-bit).
 # Development also builds on Linux (Qt 6) for CI verification of platform-neutral code.
 cmake_minimum_required(VERSION 3.21)
-project(ArenaEdit VERSION 0.1.0 LANGUAGES CXX)
+# C is required by the vendored whisper.cpp/ggml (M7, .c sources).
+project(ArenaEdit VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -68,6 +69,28 @@ add_subdirectory(stt)
 add_subdirectory(ai)
 add_subdirectory(app)
 add_subdirectory(tools)
+
+# whisper.cpp (M7 STT) — vendored at third_party/whisper (MIT).
+# Added LAST so the warning suppression below cannot leak into arena
+# targets (already created). Zero-warning policy applies to arena sources;
+# the vendored tree keeps its own history of warning states.
+if(ARENA_ENABLE_WHISPER)
+    set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+    set(WHISPER_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF) # whisper defaults to ON on Linux
+    if(NOT MSVC)
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
+    endif()
+    add_subdirectory(third_party/whisper EXCLUDE_FROM_ALL)
+    if(NOT MSVC)
+        string(REPLACE " -w" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+        string(REPLACE " -w" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    endif()
+    message(STATUS "Arena Edit: whisper.cpp v${WHISPER_VERSION} (CPU) — STT enabled")
+endif()
 
 if(ARENA_BUILD_TESTS)
     enable_testing()

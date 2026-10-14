@@ -1,0 +1,25 @@
+# Vendored: whisper.cpp v1.9.5 (MIT, see LICENSE)
+
+Source: https://github.com/ggml-org/whisper.cpp (tag v1.9.5)
+Vendored: 2026-10-14 for Arena Edit M7 (local speech-to-text).
+
+Pruned for a minimal CPU-only static build (arena never enables the
+removed backends; they were gated behind options that stay OFF):
+
+- ggml/src/: ggml-blas, ggml-cann, ggml-cuda, ggml-et, ggml-hexagon,
+  ggml-hip, ggml-metal, ggml-musa, ggml-opencl, ggml-openvino, ggml-rpc,
+  ggml-sycl, ggml-virtgpu, ggml-vulkan, ggml-webgpu, ggml-zdnn,
+  ggml-zendnn
+- top level: examples/, tests/, bindings/, docs/, ci/, models/, tools/,
+  python/, .github/, .devops/, dev/
+
+Kept: the `whisper` library (src/ + include/), the `ggml` subproject
+(CPU backend only) and `samples/jfk.wav` (used by the arena test suite
+as a 30 s public-domain speech fixture — it ships inside whisper.cpp's
+own repository).
+
+Build integration: `ARENA_ENABLE_WHISPER` (OFF by default) in the root
+CMakeLists.txt adds this directory with tests/examples off and
+BUILD_SHARED_LIBS off; the arena_stt target links `whisper` when enabled.
+Third-party warning noise is suppressed per target (-w) so the arena
+zero-warning policy keeps applying to arena sources.

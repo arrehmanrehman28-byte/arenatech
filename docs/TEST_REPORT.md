@@ -192,3 +192,41 @@ New known limitations (M6):
 - The response cache stores the gateway's raw reply; a reply that fails
   validation is invalidated before any resend (D-029), so a "retry" always
   re-queries the gateway.
+
+## Addendum — M7.1 Local STT (whisper.cpp, 2026-10-14)
+
+Per-milestone verification evidence lives in `PROGRESS.md`; this report
+keeps the M0 snapshot above. Current totals after M7.1:
+
+- **ctest: 103/103 pass** (102 unit + guismoke), **0 warnings** on a clean
+  full rebuild (including the vendored whisper.cpp + ggml CPU sources).
+  Test count grew 102 → 103.
+- New suite: `Stt.TranscribeJfkFixture` — end-to-end local transcription of
+  the bundled `jfk.wav` (11 s, public domain, shipped with whisper.cpp)
+  through the real `AudioReader` → `whisper_full` path. It **skips
+  honestly** when no model has been downloaded (the suite must stay green
+  offline / no network in CI); when a model is present (via
+  `ARENA_WHISPER_MODELS` or a prior `tools/arena_stt_check` run) it asserts:
+  `< 60 s` wall time, detected language `en`, ≥ 1 segment, non-empty text,
+  word spans within their segment and non-overlapping, and **no leaked
+  whisper control/timestamp tokens** (`[_BEG_]`, `[_TT_*]`, `_`).
+- The pre-existing `SttBoundary.HonestAvailability` now has a
+  build-aware branch (`ARENA_ENABLE_WHISPER`): with the engine compiled in
+  it asserts `isAvailable()==true`; without it, `false` (the M0 boundary
+  contract is preserved in both configurations).
+- Targeted STT runs (`tools/arena_stt_check`, 2 threads on this box):
+  **tiny ≈ 1.48 s**, **base ≈ 3.0 s** for the 11 s clip — far inside the
+  M7 acceptance bar (< 60 s on 4-core CPU). Correct output text, monotonic
+  word timestamps, clean language.
+
+New known limitations (M7.1):
+
+- whisper v1.9.5's `detect_language=true` returns zero segments on short
+  English audio (verified); the app therefore uses an **explicit** language
+  (default `en`) and does not auto-detect (D-032).
+- Models are fetched on first use from Hugging Face; the *first* run needs
+  network (size + SHA-256 pinned, D-033). Subsequent runs are fully
+  offline. The default `base` model is a 147.9 MB download.
+- CPU-only: no CUDA/Vulkan in this build (spec: CPU default); thread count
+  is capped at `min(4, idealThreadCount)`.
+

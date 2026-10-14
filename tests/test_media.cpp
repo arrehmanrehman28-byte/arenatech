@@ -3,6 +3,8 @@
 #include "media.h"
 #include "whisper.h"
 #include "render.h"
+#include <QElapsedTimer>
+#include <QFile>
 #include <QTemporaryDir>
 #include <functional>
 #include <vector>
@@ -153,11 +155,89 @@ TEST(RenderBoundary, HonestAvailability)
 
 TEST(SttBoundary, HonestAvailability)
 {
-    // whisper.cpp binds in M7; M0 must say so clearly, not fake results.
+    // whisper.cpp is linked only when ARENA_ENABLE_WHISPER is set; the
+    // boundary must report its state honestly, never fake results.
+#if defined(ARENA_ENABLE_WHISPER)
+    EXPECT_TRUE(Transcriber::isAvailable());
+#else
     EXPECT_FALSE(Transcriber::isAvailable());
+#endif
     QString err;
     QList<TranscriptSegment> out;
+    // A nonexistent input fails with a clear error either way (and must not
+    // touch the network or model cache before checking the file).
     EXPECT_FALSE(Transcriber::transcribe("a.wav", {}, out, &err, nullptr));
     EXPECT_FALSE(err.isEmpty());
     EXPECT_EQ(Transcriber::models().size(), 3);
+}
+
+// M7: end-to-end local transcription of the bundled JFK fixture (11 s,
+// public domain, shipped with whisper.cpp). The model is on-demand: when it
+// has not been downloaded yet the test skips honestly (no network in CI);
+// run tools/arena_stt_check once (or set ARENA_WHISPER_MODELS) to populate
+// the cache.
+TEST(Stt, TranscribeJfkFixture)
+{
+    if (!Transcriber::isAvailable())
+        GTEST_SKIP() << "whisper.cpp not compiled in";
+    const QString wav = QString(ARENA_TEST_FIXTURES) + QStringLiteral("/jfk.wav");
+    if (!QFile::exists(wav))
+        GTEST_SKIP() << "jfk.wav fixture missing";
+
+    // Prefer the fastest model that is ready; skip if none is downloaded.
+    QString model;
+    if (Transcriber::modelIsReady(QStringLiteral("tiny")))
+        model = QStringLiteral("tiny");
+    else if (Transcriber::modelIsReady(QStringLiteral("base")))
+        model = QStringLiteral("base");
+    else
+        GTEST_SKIP() << "no whisper model downloaded yet (on-demand; run "
+                        "tools/arena_stt_check first)";
+
+    Transcriber::Options opts;
+    opts.model = model;
+    QList<TranscriptSegment> out;
+    QString err;
+    QString lang;
+    float progressAtEnd = -1.0;
+    QElapsedTimer t;
+    t.start();
+    ASSERT_TRUE(Transcriber::transcribe(wav, opts, out, &err,
+                                        [&](float f) { progressAtEnd = f; }, &lang))
+        << err.toStdString();
+    const qint64 elapsedMs = t.elapsed();
+
+    // Acceptance: bundled sample clip transcribes in < 60 s (4-core CPU).
+    EXPECT_LT(elapsedMs, 60000) << "transcription too slow: " << elapsedMs << " ms";
+    EXPECT_EQ(lang, QStringLiteral("en"));
+    EXPECT_FALSE(out.isEmpty());
+    EXPECT_EQ(progressAtEnd, 1.0f);
+
+    QString allText;
+    for (const TranscriptSegment &seg : out) {
+        EXPECT_LT(seg.startMs, seg.endMs);
+        EXPECT_GT(seg.endMs, 0);
+        EXPECT_FALSE(seg.text.trimmed().isEmpty());
+        allText += seg.text + QLatin1Char(' ');
+
+        qint64 prevEnd = 0;
+        for (const WordSpan &w : seg.words) {
+            // Word spans stay (within tolerance) inside their segment.
+            EXPECT_GE(w.startMs, seg.startMs - 100);
+            EXPECT_LE(w.endMs, seg.endMs + 100);
+            EXPECT_GE(w.endMs, w.startMs); // zero-length ok at segment edges
+            EXPECT_GE(w.startMs, prevEnd - 50); // non-overlapping
+            prevEnd = w.endMs;
+            const QString word = w.text.trimmed();
+            EXPECT_FALSE(word.isEmpty());
+            // No leaked special/timestamp tokens (whisper internals).
+            EXPECT_EQ(word.contains(QLatin1Char('[')), false) << word.toStdString();
+            EXPECT_EQ(word.contains(QLatin1Char('_')), false) << word.toStdString();
+        }
+    }
+    // The JFK fixture ends with the famous last line.
+    const QString lower = allText.toLower();
+    EXPECT_NE(lower.indexOf(QStringLiteral("country")), -1);
+    qInfo() << "STT(" << model << "):" << out.size() << "segments in"
+            << elapsedMs << "ms —" << allText.trimmed();
 }

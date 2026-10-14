@@ -3,6 +3,83 @@
 *Verified-phase log (working rule #2). Every entry: build clean (zero
 warnings) → tests → targeted checks → evidence.*
 
+## 2026-10-14 — M7.1 Local STT (whisper.cpp): verified ✅ (M7 part 1)
+
+**Scope delivered — `stt/` becomes a real, on-demand local transcriber**
+
+- **Vendored + integrated whisper.cpp v1.9.5 (MIT)** as a CMake
+  subproject, CPU-only, built static (`libwhisper.a` + `ggml`). New CMake
+  option `ARENA_ENABLE_WHISPER` (default **OFF**) — when ON, `arena_stt`
+  links the vendored target; when OFF, the same interface file compiles to
+  honest "not available" results (no fake output, per the STT boundary
+  rule). No CUDA/Vulkan — this build is CPU by design (spec: CPU default).
+- **On-demand model download + verification** (`Transcriber::ensureModel`):
+  `tiny` (77.7 MB), `base` (147.9 MB), `small` (487.6 MB) are fetched on
+  first use from the official `ggerganov/whisper.cpp` Hugging Face repo,
+  written to a `.part` file, then **size- and SHA-256-checked against
+  pinned constants** before being moved into the model dir
+  (`AppLocalDataLocation/whisper`, overridable via `ARENA_WHISPER_MODELS`
+  for tests/CI). A corrupt/partial file is deleted and re-fetched. No
+  network call is made to *transcribe* — only to obtain the model once.
+- **`Transcriber::transcribe`** decodes any audio through the existing
+  `AudioReader` → 16 kHz mono float32, runs `whisper_full` on a
+  CPU-only context, and returns **segment-level and word-level**
+  timestamps (`TranscriptSegment` + `WordSpan`). Word spans come from
+  whisper's per-token `t0/t1` (centisecs → ms), filtered to real words
+  (control + `[_TT_*]` timestamp tokens dropped). The model's own stderr
+  is routed to the `arenaLog` **debug** level, not the user console.
+- **Language is explicit, never auto-detected** (see D-032). Default
+  language `en`.
+
+**Verification**
+
+- Build: full tree (all targets incl. `arena_tests`, `arena_guismoke`,
+  `arena_ai_live`, `arena_stt_check`), **0 warnings** (`-Wall -Wextra`),
+  whisper + ggml compiled from the vendored sources.
+- ctest: **103/103** — was 102/102; `+1` new
+  `Stt.TranscribeJfkFixture` (skips honestly when no model is downloaded,
+  so the suite stays green offline; runs end-to-end when a model is
+  present).
+- Targeted STT runs (`tools/arena_stt_check`, the bundled `jfk.wav`,
+  11.00 s, 2 threads on this box):
+  - **tiny**: 1 segment, 22-word span, `en`, **≈ 1.48 s** wall.
+  - **base** (product default): 1 segment, 22-word span, `en`,
+    **≈ 3.0 s** wall.
+  - Output: *"And so my fellow Americans ask not what your country can do
+    for you, ask what you can do for your country."* — correct, with sane
+    monotonic word timestamps and **no** leaked `[_BEG_]/[_TT_*]` tokens.
+- **M7 acceptance target "transcription of bundled sample clip < 60 s on
+  4-core CPU": MET with wide margin.** This sandbox has only 2 cores and
+  even the default `base` model finishes in ~3 s (≈ 1/20 of the budget);
+  a 4-core machine will be faster still.
+
+**Bugs found + fixed by the real run**
+
+- whisper v1.9.5 `detect_language=true` returned **zero segments** on the
+  11 s English sample (rc=0, lang detected as `en`) for both tiny and base
+  — an upstream behavior, not our decode. Worked around by using an
+  explicit `language` and `detect_language=false` (D-032); decode was
+  verified correct in isolation (176 000 samples, healthy ±0.78 range)
+  before the workaround.
+- v1.9.x special-token layout: `beg` (50364) is *above* `eot` (50257), so
+  the classic `id >= beg && id <= eot` range test is empty and let
+  `[_BEG_]` through as a "word". Filter is now `id >= beg` (upper-open)
+  plus the individual control tokens (D-034).
+- `QVector`/`QList` (Qt 6) has no pointer-pair `append`; sample
+  accumulation uses `std::vector` (D-035).
+
+**Not done / next**
+
+- M7.2 — feed the transcript into the M6 features (chapter/cut/title
+  suggestions from *local* text) and surface a "Transcribe" action in the
+  UI with a model picker + progress.
+- M7.3 — NL command bar (`/ai`) end-to-end against the transcript +
+  silence map, with the strict JSON action schema, preview + confirmation,
+  and undoable apply (acceptance: "add a fade-out to the last clip" →
+  validated preview → undoable apply, tested).
+- Wire `Transcriber` into the AI panel so a clip's local transcript can
+  seed the cut/chapter/title prompts (text only ever leaves the machine).
+
 ## 2026-10-13 — M6 AI features: verified ✅
 
 **Scope delivered**
