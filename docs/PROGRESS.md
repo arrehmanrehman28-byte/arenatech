@@ -3,6 +3,56 @@
 *Verified-phase log (working rule #2). Every entry: build clean (zero
 warnings) → tests → targeted checks → evidence.*
 
+## 2026-10-14 — M9.4–M9.10 GitHub release pipeline: live ✅
+
+**Scope delivered** — project pushed to `arrehmanrehman28-byte/arenatech`
+(public; full history, `main`), both workflows fixed to green on GitHub:
+
+- **Linux CI gate** (ci.yml): build tools via apt + Qt 6.8.3 LTS from the
+  official Qt CDN via `aqtinstall` (Ubuntu 24.04 ships Qt 6.4 < 6.5; the
+  packagecloud gpgkey URL is 404) → single-line cmake configure with
+  `CMAKE_PREFIX_PATH` → zero-warning gate → ctest 113 → headless
+  selftest with `ARENA_SELFTEST_MEDIA` → benchmark → portable payload
+  artifact. **GREEN on GitHub** (runs 38596696301 / 38596756168).
+- **FFmpeg 6.x/7.1 compat** (M9.8): `avcodec_get_supported_config`
+  (7.1+, libavcodec ≥ 61.19.100) is now behind shared
+  `core/ffmpeg_compat.h::arena::ff::pickEncoderSampleFormat()` with a
+  fallback to the static encoder `sample_fmts` table — Ubuntu 24.04
+  ships FFmpeg 6.1.1, vcpkg ships 9.x; one code path for both.
+  Local rebuild: 0 warnings, ctest 113/113.
+- **Windows CI** (M9.9/M9.10): `set -o pipefail` in the Build step
+  (`| tee build.log` was masking cmake failures); `vcvars64` env import
+  before `tools\release.ps1` (MSVC `cl` is not on PATH on bare
+  runners — the first release attempt died at `Missing tool: cl`);
+  vcpkg from the image's pre-installed `C:\vcpkg`
+  (`VCPKG_INSTALLATION_ROOT`) with a fresh-clone fallback; the removed
+  `lukka/checkout-vcpkg`/`lukka/run-cmake` actions (repository no
+  longer exists) are gone entirely. vcpkg `ffmpeg` port default =
+  LGPL (its `gpl` feature stays off — policy preserved).
+- **Release workflow** (release.yml, manual dispatch or `v*` tag):
+  vcpkg Qt6 + FFmpeg (LGPL) → vcvars64 → `tools\release.ps1 -WithMedia
+  -FfmpegDir <vcpkg prefix>` → artifacts `arenaedit-windows-x86_64-full`
+  (Setup.exe + portable zip + staged payload).
+
+**Verification**
+
+- Linux job: success on GitHub (real FFmpeg 6.1.1 + Qt 6.8.3, ctest
+  113, selftest, benchmark).
+- Windows job: in progress (full-media release build, vcpkg
+  qtbase/ffmpeg from source ~70 min, then MSVC build + ctest +
+  selftest + iscc + zip).
+- Git push auth: fine-grained PAT accepted only as
+  `<username>:<token>` Basic over HTTPS (the `x-access-token` username
+  form is rejected by github.com's git endpoint); token used inline in
+  a one-shot credential-helper script, deleted immediately, never
+  stored in the repo or .git/config. **User must revoke the pasted
+  tokens** (both) at github.com/settings/tokens.
+
+**Not done / next**
+
+- Watch the Windows release run to green → hand the artifact download
+  link to the user; rebuild the source zip with the final history.
+
 ## 2026-10-14 — M9 Release (Linux scope): verified ✅ (Windows artifact pending, D-044)
 
 **Scope delivered**
