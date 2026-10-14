@@ -84,6 +84,8 @@ jobs:
           # The image's pre-installed vcpkg uses <root>\installed as its
           # default install root (not vcpkg_installed); detect which exists.
           $inst = if (Test-Path "$env:VCPKG_ROOT\installed\x64-windows") { "$env:VCPKG_ROOT\installed" } else { "$env:VCPKG_ROOT\vcpkg_installed" }
+          # Runtime DLLs (Qt/FFmpeg) for ctest + selftest from the build tree.
+          $env:PATH = "$inst\x64-windows\bin;$env:PATH"
           tools\release.ps1 -WithMedia -FfmpegDir "$inst\x64-windows"
 
       - name: Show artifacts
