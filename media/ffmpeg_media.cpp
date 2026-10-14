@@ -20,6 +20,8 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include "ffmpeg_compat.h"
+
 namespace arena {
 namespace {
 
@@ -757,24 +759,8 @@ bool initAudioEncoder(ProxyJob &j, QString *err)
     else
         av_channel_layout_default(&j.aenc->ch_layout, inCh > 0 ? inCh : 2);
 
-    // Pick a sample format the encoder supports (query the supported-config API).
-    j.aenc->sample_fmt = AV_SAMPLE_FMT_NONE;
-    const void *cfg = nullptr;
-    int cfgCount = 0;
-    const int rc = avcodec_get_supported_config(nullptr, enc, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0,
-                                                &cfg, &cfgCount);
-    if (rc == 0 && cfg) {
-        const auto *fmts = static_cast<const AVSampleFormat *>(cfg);
-        AVSampleFormat first = AV_SAMPLE_FMT_NONE;
-        for (int i = 0; fmts[i] != AV_SAMPLE_FMT_NONE; ++i) {
-            if (fmts[i] == AV_SAMPLE_FMT_FLTP) {
-                first = fmts[i];
-                break;
-            }
-            if (first == AV_SAMPLE_FMT_NONE) first = fmts[i];
-        }
-        j.aenc->sample_fmt = first;
-    }
+    // Pick a sample format the encoder supports (version-aware helper).
+    j.aenc->sample_fmt = arena::ff::pickEncoderSampleFormat(enc);
     if (j.aenc->sample_fmt == AV_SAMPLE_FMT_NONE) {
         if (err) *err = QStringLiteral("aac encoder has no usable sample format");
         return false;

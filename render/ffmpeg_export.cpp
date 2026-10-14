@@ -20,6 +20,8 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include "ffmpeg_compat.h"
+
 #include <cstring>
 #include <vector>
 
@@ -75,21 +77,11 @@ QStringList videoCandidates(const QString &requested, const QStringList &availab
     return out;
 }
 
-// Pick the encoder sample format (FLTP preferred), same pattern as the proxy.
+// Pick the encoder sample format (FLTP preferred); the version-aware
+// implementation lives in core/ffmpeg_compat.h (shared with the proxy path).
 AVSampleFormat pickSampleFormat(const AVCodec *enc)
 {
-    const void *cfg = nullptr;
-    int cfgCount = 0;
-    AVSampleFormat first = AV_SAMPLE_FMT_NONE;
-    if (avcodec_get_supported_config(nullptr, enc, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, &cfg,
-                                     &cfgCount) == 0 && cfg) {
-        const auto *fmts = static_cast<const AVSampleFormat *>(cfg);
-        for (int i = 0; fmts[i] != AV_SAMPLE_FMT_NONE; ++i) {
-            if (fmts[i] == AV_SAMPLE_FMT_FLTP) return AV_SAMPLE_FMT_FLTP;
-            if (first == AV_SAMPLE_FMT_NONE) first = fmts[i];
-        }
-    }
-    return first;
+    return arena::ff::pickEncoderSampleFormat(enc);
 }
 
 void fail(ExportJobResult *r, const QString &what)
