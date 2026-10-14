@@ -18,7 +18,7 @@ Status legend: `not started` / `in progress` / `verified` (build + tests green, 
 | M6 | Kilo Gateway | Streaming client (verified against live gateway), subtitle translation, chapters, titles, cut suggestions, AI panel, budget, cache | verified (NL command bar → M7) |
 | M7 | Smart features | whisper.cpp transcription, edit suggestions from transcript + silence map, NL command bar (`/ai`) | verified |
 | M8 | Polish | Onboarding tour, empty states, motion, accessibility audit, DPI 100–300 %, performance tuning | verified (tour + sample + a11y audit + 10-min soak → M9) |
-| M9 | Release | Portable .exe, Inno Setup installer, code-signing hook, benchmark report, docs final, release checklist | not started |
+| M9 | Release | Portable single .exe (static Qt where practical, UPX off by default), Inno Setup installer with branding/credit, code-signing from env cert, benchmark harness output in `PERFORMANCE.md`, test report + known limitations | verified (Linux scope) — Windows artifact/signing via release pipeline (D-044) |
 
 ## Phase details and exit criteria
 

@@ -11,26 +11,30 @@ Windows 10/11 (64-bit) — built from scratch.*
 - AI automation through the Kilo Gateway — **optional, off by default, text-only**
 - Fast: sub-2 s cold start, low idle RAM, hardware acceleration where available
 
-> **Status: M0 skeleton complete and verified** — 34/34 unit tests, 14/14
-> headless selftest, 92 ms cold start, 46 MB idle. See
-> [docs/PROGRESS.md](docs/PROGRESS.md) and
-> [docs/TEST_REPORT.md](docs/TEST_REPORT.md). The full build plan is in
+> **Status: M9 release state** — milestones M0–M8 fully verified
+> (113/113 tests, 108-check GUI smoke, 10-minute fuzzed import soak with
+> zero UI freezes), 130 ms cold start, 63 MB idle, 28 FPS software export.
+> M9 packaging/benchmark work is verified for the Linux scope; the Windows
+> artifact build + signing run in the release pipeline. See
+> [docs/PROGRESS.md](docs/PROGRESS.md),
+> [docs/TEST_REPORT.md](docs/TEST_REPORT.md) and
+> [docs/PERFORMANCE.md](docs/PERFORMANCE.md). The full build plan is in
 > [docs/PLAN.md](docs/PLAN.md).
 
 ## Features (by phase)
 
 | Phase | What you get |
 |-------|--------------|
-| **M0 (done)** | Workspace + docks, themes (dark/light/high-contrast, live accent), EN/AR/UR UI + RTL, command palette (Ctrl+K, `/ai` mode), project model + undo/redo, autosave + crash recovery, logging, AI panel with **working streaming Ask AI** + privacy notice + hourly budget meter, themer with WCAG-verified high contrast, CI, benchmarks |
-| M1 | FFmpeg import/decode, A/V-synced playback, thumbnails, waveforms, 540p proxies, missing-media relink |
-| M2 | Clips, ripple/roll/slip/slide trims, snap feedback, markers, I/O, Q/W |
-| M3 | D3D11 compositor, transforms/opacity/transitions/color (incl. .cube LUTs), speed, Ken Burns, LRU frame cache |
-| M4 | Export presets (YouTube/Reels/Web/ProRes/podcast), NVENC/QSV/AMF + software fallback, batch queue |
-| M5 | SRT/VTT/ASS, multi-language subtitle tracks (BCP-47), burn-in/sidecar, RTL text, reading-speed warnings |
-| M6 | Subtitle translation (40/batch, validated), chapters, smart titles/descriptions, cut suggestions — all accept/reject, never auto-applied |
-| M7 | Local whisper.cpp transcription (tiny/base/small on demand), NL command bar with strict JSON schema |
-| M8 | Onboarding tour, accessibility audit, DPI 100–300 %, icon sizes, screenshots |
-| M9 | Portable .exe, Inno Setup installer, code signing, release benchmarks |
+| **M0 (done)** | Workspace + docks, themes (dark/light/high-contrast, live accent), 8-language UI + full RTL, command palette (Ctrl+K, `/ai` mode), project model + undo/redo, autosave + crash recovery, logging, AI panel with **working streaming Ask AI** + privacy notice + hourly budget meter, WCAG-verified high contrast, CI, benchmarks |
+| **M1 (done)** | FFmpeg import/decode, A/V-synced playback, thumbnails, waveforms, 540p proxies, missing-media relink |
+| **M2 (done)** | Clips, ripple/roll/slip/slide trims, snap feedback, markers, I/O, Q/W |
+| **M3 (done)** | Compositor, transforms/opacity/transitions/color (incl. .cube LUTs), speed, Ken Burns, LRU frame cache |
+| **M4 (done)** | Export presets (YouTube/Reels/Web/ProRes/podcast), NVENC/QSV/AMF + software fallback, batch queue |
+| **M5 (done)** | SRT/VTT/ASS, multi-language subtitle tracks (BCP-47), burn-in/sidecar, RTL text, reading-speed warnings |
+| **M6 (done)** | Subtitle translation (40/batch, validated), chapters, smart titles/descriptions, cut suggestions — all accept/reject, never auto-applied |
+| **M7 (done)** | Local whisper.cpp transcription (tiny/base/small on demand), transcript-linked features, NL command bar with strict JSON schema |
+| **M8 (done)** | First-run tour (60 s, replayable), bundled sample project, contextual tips, focus rings + UIA names, WCAG AA audit, DPI 100–300 %, font scaling, reduce-motion |
+| **M9** | Portable exe + Inno Setup installer (signed from env cert when provided), release benchmarks (this state), Windows artifact via release pipeline |
 
 ## System requirements
 
@@ -52,18 +56,31 @@ tools\build.ps1 -Tests
 ```
 
 Produces `build\app\Release\ArenaEdit.exe`, runs the tests, and runs the
-headless selftest. Packaging: `iscc tools\package.iss` (Inno Setup 6).
+headless selftest. The full-media build (import/decode/export/STT) adds
+`-WithMedia -FfmpegDir <ffmpeg-dev-prefix>` (a vcpkg port dir or
+ffmpeg.org build with `include/lib/bin`; whisper.cpp compiles from the
+vendored tree). Packaging: stage the portable payload (exe + Qt/FFmpeg
+DLLs + `assets/` + `i18n/`, same layout CI uses) and run
+`iscc tools\package.iss` (Inno Setup 6). Code-signing: set `CERT_PATH` /
+`CERT_PASSWORD` before `iscc` for an authenticated build; without them the
+package is unsigned.
 
 ### Linux (dev/CI — same sources)
 
 ```bash
-sudo apt install cmake ninja-build qt6-base-dev libgtest-dev libgl1-mesa-dev
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DARENA_BUILD_TESTS=ON
+sudo apt install cmake ninja-build qt6-base-dev libgtest-dev libgl1-mesa-dev \
+  pkg-config libavformat-dev libavcodec-dev libavutil-dev \
+  libswscale-dev libswresample-dev
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DARENA_BUILD_TESTS=ON \
+  -DARENA_ENABLE_FFMPEG=ON -DARENA_ENABLE_WHISPER=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/app/arenaedit --selftest     # headless end-to-end check
-bash tools/benchmark.sh              # start time / RAM / size / tests
+bash tools/benchmark.sh              # start time / RAM / size / export FPS
 ```
+
+(Without the FFmpeg dev packages the app builds and tests with media
+stubs — the core never depends on media or AI.)
 
 ### CI
 
@@ -114,10 +131,10 @@ media/   FFmpeg boundary (M1): probe, proxies, waveforms
 render/  compositor + effect registry (M3)
 ai/      Kilo Gateway client, prompts, action validator, key store
 stt/     whisper.cpp boundary (M7)
-i18n/    translation catalogs (en, ar, ur) + drop-in loader README
-assets/  theme tokens, icon set, fonts notes, sample project
-tests/   GTest unit tests (34)
-tools/   build.ps1, benchmarks, Inno Setup script
+i18n/    translation catalogs (en, ar, es, fr, hi, ja, ur, zh) + drop-in loader
+assets/  theme tokens, fonts notes, sample project
+tests/   GTest unit tests (113) + GUI smoke + fuzzed import soak
+tools/   build.ps1, benchmarks, Inno Setup script, export bench driver
 docs/    plan, architecture, UI guide, performance, AI, privacy, progress,
          decisions, test report
 ```

@@ -7,3 +7,7 @@ target_compile_definitions(arena_ai_live PRIVATE
 # Local STT end-to-end check (M7): model download/verify + transcription.
 add_executable(arena_stt_check stt_check.cpp)
 target_link_libraries(arena_stt_check PRIVATE arena_stt arena_media)
+
+# M9 release benchmark: export encode FPS through the real ExportQueue path.
+add_executable(arena_export_bench export_bench.cpp)
+target_link_libraries(arena_export_bench PRIVATE arena_render arena_media Qt6::Core Qt6::Gui)

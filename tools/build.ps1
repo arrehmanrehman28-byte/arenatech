@@ -1,17 +1,27 @@
 # Arena Edit — one-command Windows build (MSVC 2022 + Ninja + vcpkg + Qt 6).
-# Usage:  tools\build.ps1 [-Configuration Release|Debug] [-Tests]
+# Usage:  tools\build.ps1 [-Configuration Release|Debug] [-Tests] [-WithMedia]
+#         [-FfmpegDir <ffmpeg-dev-prefix>]
 # Prereqs: Visual Studio 2022 (Desktop C++), CMake >= 3.21, Ninja, vcpkg.
-# The vcpkg manifest pins qtbase (LGPL) — FFmpeg is added in the Media phase (M1)
-# behind -DARENA_ENABLE_FFMPEG=ON.
+# The vcpkg manifest pins qtbase (LGPL) — FFmpeg (LGPL) is linked from
+# -FfmpegDir (a vcpkg port dir or ffmpeg.org build prefix: include/lib/bin)
+# when -WithMedia is given; whisper.cpp (MIT, vendored in third_party/)
+# compiles from source in the same switch. Without -WithMedia the app
+# builds and tests with media stubs (no import/decode/export/STT).
 param(
     [string]$Configuration = "Release",
-    [switch]$Tests
+    [switch]$Tests,
+    [switch]$WithMedia,
+    [string]$FfmpegDir = ""
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 
 Write-Host "== Arena Edit build ==" -ForegroundColor Cyan
-Write-Host "root: $root  config: $Configuration"
+Write-Host "root: $root  config: $Configuration  media: $WithMedia"
+
+if ($WithMedia -and (-not $FfmpegDir)) {
+    throw "-WithMedia requires -FfmpegDir <prefix> (vcpkg port dir or ffmpeg.org build with include/lib/bin)."
+}
 
 # 1. Toolchain sanity -----------------------------------------------------------
 $need = @("cmake", "ninja", "cl")
@@ -27,10 +37,17 @@ if (-not (Test-Path "env:\VCPKG_ROOT") -and -not (Get-Command vcpkg -ErrorAction
 # 2. Configure ------------------------------------------------------------------
 $buildDir = Join-Path $root "build"
 $testFlag = if ($Tests) { "ON" } else { "OFF" }
-cmake -B $buildDir -G Ninja -DCMAKE_BUILD_TYPE=$Configuration `
-    -DARENA_BUILD_TESTS=$testFlag `
-    -DARENA_ENABLE_FFMPEG=OFF -DARENA_ENABLE_WHISPER=OFF `
-    -DARENA_BUILD_DATE=(Get-Date -Format "yyyy-MM-dd HH:mm UTC")
+$ffmpegFlag = if ($WithMedia) { "ON" } else { "OFF" }
+$whisperFlag = if ($WithMedia) { "ON" } else { "OFF" }
+$ffmpegDirArg = if ($FfmpegDir) { "-DARENA_FFMPEG_DIR=$FfmpegDir" } else { @() }
+$cmakeArgs = @(
+    "-B", $buildDir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=$Configuration",
+    "-DARENA_BUILD_TESTS=$testFlag",
+    "-DARENA_ENABLE_FFMPEG=$ffmpegFlag",
+    "-DARENA_ENABLE_WHISPER=$whisperFlag",
+    "-DARENA_BUILD_DATE=" + (Get-Date -Format "yyyy-MM-dd HH:mm UTC")
+) + $ffmpegDirArg
+cmake @cmakeArgs
 if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
 
 # 3. Build ----------------------------------------------------------------------
@@ -39,10 +56,11 @@ if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
 # 4. Tests ----------------------------------------------------------------------
 if ($Tests) {
-    Push-Location (Join-Path $buildDir)
+    Push-Location $buildDir
     ctest --output-on-failure --build-config $Configuration
-    if ($LASTEXITCODE -ne 0) { Pop-Location; throw "tests failed" }
+    $code = $LASTEXITCODE
     Pop-Location
+    if ($code -ne 0) { throw "tests failed" }
 }
 
 # 5. Selftest (headless app check) ---------------------------------------------
@@ -53,3 +71,6 @@ Write-Host "== selftest ==" -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) { throw "selftest failed" }
 
 Write-Host "== done: $($exe.FullName) ==" -ForegroundColor Green
+if ($WithMedia) {
+    Write-Host "Next: stage the portable payload (ci.yml windows job) and run iscc tools\package.iss" -ForegroundColor Cyan
+}

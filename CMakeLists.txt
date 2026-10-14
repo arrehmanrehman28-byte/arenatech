@@ -45,10 +45,39 @@ if(NOT DEFINED ARENA_ENABLE_FFMPEG)
         "Link real FFmpeg (media pipeline)" FORCE)
 else()
     if(ARENA_ENABLE_FFMPEG)
-        find_package(PkgConfig REQUIRED)
-        pkg_check_modules(AV REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil
-                          libswscale libswresample)
-        message(STATUS "Arena Edit: FFmpeg ${AV_VERSION} (explicitly enabled)")
+        if(WIN32 AND DEFINED ARENA_FFMPEG_DIR)
+            # Windows release path (D-044): a FFmpeg dev prefix provided by
+            # the release pipeline (vcpkg port or ffmpeg.org build). Layout:
+            #   <dir>/include/libav*  <dir>/lib/*.lib  <dir>/bin/*.dll
+            # The DLLs are staged into the portable payload by the
+            # packaging step (ci.yml windows job copies bin/*.dll).
+            set(AV_INCLUDE_DIRS "${ARENA_FFMPEG_DIR}/include")
+            set(AV_LIBRARIES "")
+            foreach(_c IN ITEMS avformat avcodec avutil swscale swresample)
+                set(_lib "${ARENA_FFMPEG_DIR}/lib/${_c}.lib")
+                if(NOT EXISTS "${_lib}")
+                    message(FATAL_ERROR "ARENA_FFMPEG_DIR: missing ${_lib}")
+                endif()
+                if(NOT TARGET ${_c})
+                    add_library(${_c} SHARED IMPORTED)
+                    set_target_properties(${_c} PROPERTIES
+                        IMPORTED_LOCATION "${_lib}")
+                endif()
+                list(APPEND AV_LIBRARIES ${_c})
+            endforeach()
+            if(NOT TARGET PkgConfig::AV)
+                add_library(PkgConfig::AV INTERFACE IMPORTED)
+                set_target_properties(PkgConfig::AV PROPERTIES
+                    INTERFACE_INCLUDE_DIRECTORIES "${AV_INCLUDE_DIRS}"
+                    INTERFACE_LINK_LIBRARIES "${AV_LIBRARIES}")
+            endif()
+            message(STATUS "Arena Edit: FFmpeg from ${ARENA_FFMPEG_DIR} - media pipeline enabled")
+        else()
+            find_package(PkgConfig REQUIRED)
+            pkg_check_modules(AV REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil
+                              libswscale libswresample)
+            message(STATUS "Arena Edit: FFmpeg ${AV_VERSION} (explicitly enabled)")
+        endif()
     else()
         message(STATUS "Arena Edit: FFmpeg explicitly disabled - building media stubs")
     endif()

@@ -3,6 +3,67 @@
 *Verified-phase log (working rule #2). Every entry: build clean (zero
 warnings) → tests → targeted checks → evidence.*
 
+## 2026-10-14 — M9 Release (Linux scope): verified ✅ (Windows artifact pending, D-044)
+
+**Scope delivered**
+
+1. **Export encode-FPS benchmark (real pipeline)** — new
+   `tools/export_bench.cpp` → `arena_export_bench`: probes real media,
+   builds the project, encodes through the *same* ExportQueue worker path
+   the UI uses (stateless per-frame fetchers; the HW-fallback chain is
+   exercised for real — nvenc fails without CUDA → qsv fails on pixel
+   format → x264). Wired as the final stage of `tools/benchmark.sh`.
+   - 640×360 @ 30 fps, 60 frames, 3 runs: `mp4-h264-balanced` (→x264)
+     **28.3 FPS** (28.79 / 28.26 / 28.33); `webm-vp9` **13.9 FPS**
+     (14.13 / 13.99 / 13.29). Output files probe back at 1.0 s ± 0.06
+     (M4 property re-confirmed).
+2. **Final benchmark harness run** (Release, UPX off): cold start
+   **130 ms** avg-of-5 (target < 2000), idle **63 MB** (target < 150),
+   core binary **4.1 MB** (target < 60) — PERFORMANCE.md milestone log
+   completed with an M9 results section.
+3. **Windows release path hardened** (reviewed; execution pending a
+   Windows machine — D-044):
+   - CMake: `ARENA_FFMPEG_DIR` prefix path for `ARENA_ENABLE_FFMPEG=ON`
+     on WIN32 (imported targets for avformat/avcodec/avutil/swscale/
+     swresample, exposed as the same `PkgConfig::AV` interface). Before
+     this, `ON` on Windows was impossible (pkg-config required).
+   - `tools/build.ps1`: `-WithMedia -FfmpegDir <prefix>` (FFmpeg +
+     whisper ON, whisper from the vendored tree); stale hardcoded
+     FFmpeg-OFF + M1-era comment removed.
+   - `tools/package.iss`: AppId → stable GUID (upgrade continuity);
+     branding/credit/signing-env unchanged.
+   - `ci.yml`: Linux job installs FFmpeg dev packages and enables
+     whisper explicitly (full pipeline in CI); Windows job stays the
+     core-configuration gate with installer + artifact upload; DLL-copy
+     pattern now matches FFmpeg runtime names (`avcodec-*.dll`, …).
+4. **Release documentation** — README (status → M9, feature table,
+   packaging/signing notes), TEST_REPORT final known-limitations rollup
+   (8 items), PERFORMANCE.md M9 section.
+
+**Verification**
+
+- Full rebuild: **0 errors, 0 warnings**. **ctest 113/113** (unchanged
+  count — M9 hardened tooling; the export bench is a benchmark, not a
+  test, by design: numbers move with hardware, pass/fail would flake).
+- Benchmark harness end-to-end (logged): 130 ms / 63 MB / 4.1 MB /
+  28.3 & 13.9 FPS — all within spec §2 targets.
+- Linux CI job is now a faithful proxy: same flags the release uses
+  (Release + FFMPEG ON + WHISPER ON + tests) except the Windows toolchain.
+
+**Release checklist (M9 exit criterion)**
+
+| Item | Status |
+|------|--------|
+| Portable single-exe layout (exe + Qt/FFmpeg DLLs + assets + i18n, relocatable) | ✅ defined + staged in CI (linux job); Windows staging reviewed |
+| UPX off by default | ✅ `ARENA_UPX` option, OFF |
+| Inno Setup installer with branding/credit | ✅ `tools/package.iss` (Arena Edit, credit on finished page, GUID AppId, x64, Win10+, lowest privileges); `iscc` run pending Windows |
+| Code signing from env cert | ✅ `SignWithSigntoolEnv=yes` + `CERT_PATH`/`CERT_PASSWORD` documented; no cert in this environment (unsigned by default) |
+| Benchmark harness output in PERFORMANCE.md | ✅ M9 section, all targets met |
+| Test report + known limitations | ✅ 113/113 + 108-check smoke + 10-min soak; final rollup (8 items) |
+| Zero warnings | ✅ full rebuild |
+| Artifact uploaded in CI | ✅ linux (portable + benchmark.txt) + windows (Setup.exe + portable) jobs; full-media Windows artifact needs the FFmpeg prefix (D-044) |
+
+
 ## 2026-10-14 — M8 Polish (sample project, first-run tour, accessibility): verified ✅
 
 **Scope delivered**

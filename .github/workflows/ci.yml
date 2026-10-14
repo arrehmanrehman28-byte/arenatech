@@ -1,6 +1,10 @@
 # Arena Edit — CI (GitHub Actions).
-# Linux job: build (zero warnings), unit tests, selftest, benchmark.
-# Windows job: build (MSVC 2022 + Ninja + Qt via vcpkg), tests, selftest, package.
+# Linux job: full build (FFmpeg via apt + vendored whisper.cpp), zero-warning
+# gate, unit tests, selftest, benchmark, portable artifact.
+# Windows job: core-configuration gate (MSVC + vcpkg Qt) + packaging. The
+# full-media Windows build (FFmpeg prefix + whisper) runs via the release
+# pipeline — it needs an FFmpeg dev prefix that GitHub's public runners do
+# not ship (D-044); see tools/build.ps1 -WithMedia -FfmpegDir.
 name: ci
 
 on:
@@ -8,6 +12,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows_with_media:
+        description: "Build the full-media Windows release (requires ARENA_FFMPEG_DIR secret)"
+        type: boolean
+        default: false
 
 env:
   CMAKE_BUILD_TYPE: Release
@@ -24,10 +33,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build qt6-base-dev qt6-l10n-tools \
-            libgtest-dev googletest libgl1-mesa-dev libfontconfig1-dev
+            libgtest-dev googletest libgl1-mesa-dev libfontconfig1-dev \
+            pkg-config \
+            libavformat-dev libavcodec-dev libavutil-dev \
+            libswscale-dev libswresample-dev
 
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DARENA_BUILD_TESTS=ON
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+          -DARENA_BUILD_TESTS=ON -DARENA_ENABLE_FFMPEG=ON -DARENA_ENABLE_WHISPER=ON
 
       - name: Build
         run: cmake --build build 2>&1 | tee build.log
@@ -55,12 +68,20 @@ jobs:
       - name: Keep benchmark log
         if: always()
         run: bash tools/benchmark.sh > benchmark.txt || true
+
+      - name: Stage portable payload
+        run: |
+          mkdir -p dist/portable
+          cp build/app/arenaedit dist/portable/
+          cp -r assets dist/portable/assets
+          cp -r i18n dist/portable/i18n
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: arenaedit-linux-x86_64
           path: |
-            build/app/arenaedit
+            dist/portable
             benchmark.txt
 
   windows:
@@ -77,6 +98,8 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
+      # Core-configuration gate: always runs. The optional full-media build
+      # (-WithMedia) needs an FFmpeg dev prefix (secret ARENA_FFMPEG_DIR).
       - name: Configure (Qt via vcpkg manifest)
         uses: lukka/run-cmake@v5
         with:
@@ -103,8 +126,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist\portable | Out-Null
           Copy-Item build\app\Release\ArenaEdit.exe dist\portable\
-          Get-ChildItem build -Recurse -Filter "*.dll" | Where-Object { $_.Name -match "Qt6|FFmpeg" } |
-            Copy-Item -Destination dist\portable\
+          Get-ChildItem build -Recurse -Filter "*.dll" | Where-Object {
+              $_.Name -match "Qt6|avcodec|avformat|avutil|swscale|swresample|postproc"
+          } | Copy-Item -Destination dist\portable\
           Copy-Item -Recurse assets dist\portable\assets
           Copy-Item i18n dist\portable\i18n
 

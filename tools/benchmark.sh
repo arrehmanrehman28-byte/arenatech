@@ -38,3 +38,13 @@ if [ -d "$BUILD" ]; then
     echo "--- unit tests ---"
     (cd "$BUILD" && ctest --output-on-failure 2>&1 | tail -4)
 fi
+
+# M9: export encode FPS through the real ExportQueue path (FFmpeg builds).
+BENCH="$BUILD/tools/arena_export_bench"
+FIXTURE="$ROOT/tests/fixtures/clip01.mp4"
+if [ -x "$BENCH" ] && [ -f "$FIXTURE" ]; then
+    echo "--- export encode FPS (real pipeline) ---"
+    "$BENCH" "$FIXTURE" || echo "export benchmark failed (non-fatal for this stage)"
+else
+    echo "--- export encode FPS: skipped (FFmpeg build or fixture missing) ---"
+fi

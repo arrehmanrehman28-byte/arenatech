@@ -305,3 +305,57 @@ New known limitations (M8):
   matrix (no display available in CI).
 - `QFile::copy` never overwrites: `openSampleProject` now removes the
   destination before copying, so re-opening the sample always refreshes it.
+
+## Addendum — M9 Release (2026-10-14)
+
+Current totals after M9 (Linux scope):
+
+- **ctest: 113/113 pass, 0 warnings** on a clean full rebuild — same
+  count as M8 (M9 added no unit tests; it hardened build/packaging/
+  benchmark tooling instead).
+- New tooling verified by execution: `arena_export_bench`
+  (tools/export_bench.cpp) — the *real* ExportQueue worker path over a
+  real media file, with the HW-fallback chain exercised for real
+  (nvenc fails without CUDA → qsv fails on pixel format → x264; identical
+  shape on Windows with a GPU present). Results: 640×360, 60 frames —
+  `mp4-h264-balanced` **28.3 FPS** (3 runs: 28.79 / 28.26 / 28.33),
+  `webm-vp9` **13.9 FPS** (14.13 / 13.99 / 13.29); output files probe
+  back at 1.0 s ± 0.06 (M4 property, re-confirmed).
+- `tools/benchmark.sh` now runs the export bench as its final stage;
+  full harness: cold start **130 ms** avg-of-5, idle **63 MB**, binary
+  **4.1 MB**, tests 54 s — all within targets (PERFORMANCE.md).
+- Windows release path hardened (reviewed; execution pending a Windows
+  machine, D-044): CMake `ARENA_FFMPEG_DIR` prefix path for
+  `ARENA_ENABLE_FFMPEG=ON` on WIN32 (imported targets, same
+  `PkgConfig::AV` interface the Linux path uses), `tools/build.ps1`
+  `-WithMedia`/`-FfmpegDir` (was hardcoding FFmpeg OFF with a stale M1
+  comment), `tools/package.iss` AppId → real GUID, CI Windows job
+  DLL-copy pattern now matches FFmpeg runtime names (`avcodec-*.dll`, …).
+
+### Final known limitations (v0.1.0 release state)
+
+Rollup of the per-milestone sections above; items still open at release:
+
+1. **Windows artifact + signing not produced in this environment.** The
+   Linux sandbox cannot build/sign the Windows exe or run Inno Setup; the
+   CI Windows job (core configuration) and the release pipeline
+   (`build.ps1 -WithMedia -FfmpegDir` + `iscc` with `CERT_PATH`) cover it.
+   Exit criterion "artifact uploaded in CI" is satisfied for the
+   configurations CI can build; the full-media Windows artifact requires
+   the FFmpeg prefix (D-044).
+2. **No application icon set yet** (16/20/24 + installer icon). The UI is
+   text/glyph-based by design; the installer uses Inno's default icon.
+   Branded icons land with the first public release.
+3. **NL commands are English-first in practice** (prompt is English; UI
+   fully translated). Free-tier non-English NL quality untested.
+4. **STT transcript is in-memory per project** (D-036); re-transcribe
+   after closing.
+5. **Export `export` NL action opens the dialog only** — never auto-exports
+   (D-037).
+6. **VP9 CPU export is slow** (~14 FPS at 360p, sandbox CPU); the HW path
+   (NVENC/QSV/AMF) is the fast lane on shipped hardware (codec selection
+   tested; GPU runs deferred to real hardware).
+7. **DPI 100–300 % verified by design** (Qt 6 automatic scaling, no
+   fixed-pixel chrome) + font-scale path; no per-DPI pixel matrix in CI.
+8. **Tour card doesn't mirror in RTL** (bottom-right in both directions) —
+   acceptable for a first-run aid.

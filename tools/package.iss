@@ -9,7 +9,9 @@
 ; for an authenticated build; without them the package is unsigned.
 
 [Setup]
-AppId={{8B7E4C2A-Arena-4E5D-9C1F-ARENAEDIT0001}
+; Stable AppId (GUID) — keep constant across versions so upgrades replace
+; cleanly. Do not change in a released build.
+AppId={{66AB53E9-3889-4EC5-B5C6-40BFCFC98E57}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
