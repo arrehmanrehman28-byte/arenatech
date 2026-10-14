@@ -38,14 +38,26 @@ if ($WithMedia -and (-not $FfmpegDir)) {
 }
 
 # --- 1. Toolchain sanity ------------------------------------------------------
-foreach ($tool in @("cmake", "ninja", "cl", "iscc")) {
-    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        $hint = switch ($tool) {
-            "iscc" { "Install Inno Setup 6: choco install innosetup -y" }
-            default { "Install VS2022 (Desktop C++) + CMake + Ninja; open a Developer Prompt." }
+# iscc: Inno Setup is sometimes installed without a PATH entry; probe the
+# standard locations and extend PATH if found.
+$iscc = Get-Command iscc -ErrorAction SilentlyContinue
+if (-not $iscc) {
+    foreach ($probe in @("C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+                         "C:\Program Files\Inno Setup 6\ISCC.exe")) {
+        if (Test-Path $probe) {
+            $env:PATH += ";$(Split-Path $probe)"
+            $iscc = Get-Command iscc -ErrorAction SilentlyContinue
+            break
         }
-        throw "Missing tool: $tool. $hint"
     }
+}
+foreach ($tool in @("cmake", "ninja", "cl")) {
+    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+        throw "Missing tool: $tool. Install VS2022 (Desktop C++) + CMake + Ninja; open a Developer Prompt."
+    }
+}
+if (-not $iscc) {
+    throw "Missing tool: iscc. Install Inno Setup 6: choco install innosetup -y"
 }
 
 # --- 2. Configure -------------------------------------------------------------
