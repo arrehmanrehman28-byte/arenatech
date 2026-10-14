@@ -12,6 +12,7 @@
 #include "kilogateway.h"
 #include "exportdialog.h"
 #include "exportqueue.h"
+#include "tour.h"
 #include "exporter.h"
 #include "media.h"
 #include "subtitles.h"
@@ -32,7 +33,11 @@
 #include <QTabWidget>
 #include <QToolBar>
 #include <QCryptographicHash>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QKeyEvent>
+#include <QStandardPaths>
 #include <QUuid>
 #include <QWidget>
 
@@ -145,6 +150,7 @@ void MainWindow::buildActions()
     m_fileMenu = menuBar()->addMenu(arenaTr("menu.file"));
     m_fileMenu->addAction(newAct);
     m_fileMenu->addAction(openAct);
+    m_fileMenu->addAction(arenaTr("file.openSample"), this, [this] { openSampleProject(); });
     m_fileMenu->addAction(saveAct);
     m_fileMenu->addAction(saveAsAct);
     m_fileMenu->addSeparator();
@@ -220,6 +226,8 @@ void MainWindow::buildActions()
     });
 
     m_helpMenu = menuBar()->addMenu(arenaTr("menu.help"));
+    // M8: replay the first-run tour on demand.
+    m_helpMenu->addAction(arenaTr("help.tour"), this, [this] { showTour(); });
     m_helpMenu->addAction(arenaTr("help.whatsNew"), this, [this] {
         statusBar()->showMessage(
             arenaTr("welcome.whatsNew.body", {{QStringLiteral("version"), qApp->applicationVersion()}}), 6000);
@@ -236,6 +244,8 @@ void MainWindow::buildCentral()
 
     // Program monitor: transport + preview surface.
     auto *monitorBox = new QWidget;
+    monitorBox->setObjectName(QStringLiteral("MonitorBox")); // M8 tour target
+    monitorBox->setAccessibleName(arenaTr("view.monitor"));
     auto *monLay = new QVBoxLayout(monitorBox);
     monLay->setContentsMargins(8, 8, 8, 4);
     monLay->setSpacing(6);
@@ -244,6 +254,7 @@ void MainWindow::buildCentral()
         auto *b = new QToolButton;
         b->setText(glyph);
         b->setToolTip(arenaTr(key));
+        b->setAccessibleName(arenaTr(key)); // M8: UIA/screen-reader name (glyph-only text)
         return b;
     };
     auto *back = btn(QStringLiteral("transport.back"), QStringLiteral("◀◀"));
@@ -254,6 +265,7 @@ void MainWindow::buildCentral()
     m_playbackRes = new QComboBox;
     m_playbackRes->addItems({QStringLiteral("Full"), QStringLiteral("1/2"), QStringLiteral("1/4")});
     m_playbackRes->setToolTip(arenaTr("panel.monitor.playback"));
+    m_playbackRes->setAccessibleName(arenaTr("panel.monitor.playback"));
     m_playbackRes->setCurrentIndex(0);
     connect(m_playbackRes, &QComboBox::currentIndexChanged, this,
             [this](int) { applyPlaybackResolution(); });
@@ -311,6 +323,8 @@ void MainWindow::buildCentral()
     monLay->addWidget(m_thumbs);
 
     m_timeline = new TimelineWidget;
+    m_timeline->setObjectName(QStringLiteral("TimelineWidget")); // M8 tour target
+    m_timeline->setAccessibleName(arenaTr("view.timeline"));
     connect(m_timeline, &TimelineWidget::zoomChanged, this, [](double) {});
 
     split->addWidget(monitorBox);
@@ -500,6 +514,8 @@ void MainWindow::enableAiWithNotice()
     m_kilo->refreshModels();
     m_aiPanel->setEnabledUi(true);
     m_aiEnableAct->setChecked(true);
+    // M8 contextual tip: AI just turned on.
+    tipOnce(QStringLiteral("aiEnabled"), QStringLiteral("tip.aiEnabled"));
 }
 
 void MainWindow::registerCommands()
@@ -603,6 +619,36 @@ bool MainWindow::openProjectFile(const QString &path)
     checkRecoveryFor(path);
     refreshProjectViews();
     return true;
+}
+
+// M8: the bundled sample project ships as JSON + a small CC0 clip under
+// assets/sample_project. We copy it into the user's data dir (never open the
+// read-only bundle in place) so it can be saved/relinked like any project.
+bool MainWindow::openSampleProject()
+{
+    const QString srcRoot = QStringLiteral(ARENA_ASSETS_DIR) + QStringLiteral("/sample_project");
+    const QString srcAep = srcRoot + QStringLiteral("/sample-project.aep");
+    if (!QFileInfo::exists(srcAep)) {
+        statusBar()->showMessage(arenaTr("sample.missing"), 6000);
+        return false;
+    }
+    const QString dstRoot =
+        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
+        + QStringLiteral("/sample_project");
+    QDir().mkpath(dstRoot + QStringLiteral("/sample"));
+    // Re-opening refreshes the bundle copy (QFile::copy never overwrites).
+    QFile::remove(dstRoot + QStringLiteral("/sample-project.aep"));
+    if (!QFile::copy(srcAep, dstRoot + QStringLiteral("/sample-project.aep"))) {
+        statusBar()->showMessage(arenaTr("sample.copyFailed"), 6000);
+        return false;
+    }
+    QFile::remove(dstRoot + QStringLiteral("/sample/clip01.mp4"));
+    if (!QFile::copy(srcRoot + QStringLiteral("/sample/clip01.mp4"),
+                     dstRoot + QStringLiteral("/sample/clip01.mp4"))) {
+        statusBar()->showMessage(arenaTr("sample.copyFailed"), 6000);
+        return false;
+    }
+    return openProjectFile(dstRoot + QStringLiteral("/sample-project.aep"));
 }
 
 void MainWindow::checkRecoveryFor(const QString &path)
@@ -732,7 +778,8 @@ void MainWindow::retranslateUi()
                           : arenaTr("ai.settings"));
         ++i;
     }
-    const QStringList helpKeys = {QStringLiteral("help.whatsNew"), QStringLiteral("help.about")};
+    const QStringList helpKeys = {QStringLiteral("help.tour"), QStringLiteral("help.whatsNew"),
+                                  QStringLiteral("help.about")};
     i = 0;
     for (QAction *a : m_helpMenu->actions())
         if (!a->isSeparator()) a->setText(arenaTr(helpKeys.value(++i - 1, a->text())));
@@ -844,12 +891,36 @@ void MainWindow::tickSecond()
 void MainWindow::showWelcomeIfNeeded()
 {
     if (qEnvironmentVariableIsSet("ARENA_SELFTEST")) return;
+    if (qEnvironmentVariableIsSet("ARENA_GUI_SMOKE")) return; // CI drives the window itself
     if (m_settings->firstRunDone()) return;
     WelcomeDialog dlg(this);
     dlg.exec();
     const QString lang = dlg.chosenLanguage();
     if (!lang.isEmpty()) I18n::instance().setLocale(lang);
     m_settings->setFirstRunDone();
+    // M8: first-run tour right after the welcome (Help > Tour replays it).
+    showTour();
+}
+
+void MainWindow::showTour()
+{
+    if (!m_tour) {
+        m_tour = new Tour(this);
+        connect(m_tour, &Tour::finished, this, [this](bool completed) {
+            if (!completed)
+                statusBar()->showMessage(arenaTr("tour.skippedHint"), 5000);
+        });
+    }
+    m_tour->start();
+}
+
+void MainWindow::tipOnce(const QString &id, const QString &bodyKey)
+{
+    // M8 contextual tips: shown once per feature, keyed in settings.
+    const QString k = QStringLiteral("tips/") + id;
+    if (m_settings->raw(k).toBool()) return;
+    m_settings->setRaw(k, true);
+    statusBar()->showMessage(arenaTr(bodyKey), 8000);
 }
 
 // --- M1 media pipeline ---------------------------------------------------------
@@ -1446,6 +1517,8 @@ void MainWindow::addClipToTimeline(const QString &path)
     generateWaveformThumbs(path);
     statusBar()->showMessage(
         arenaTr("media.clipAdded", {{QStringLiteral("track"), vtrack->name}}), 2500);
+    // M8 contextual tip: first clip placed.
+    tipOnce(QStringLiteral("firstClip"), QStringLiteral("tip.firstClip"));
 }
 
 void MainWindow::selectClipAt(const QString &source, qint64 timelineFrame)

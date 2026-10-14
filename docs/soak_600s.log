@@ -1,0 +1,7 @@
+Detected locale "C" with character encoding "ANSI_X3.4-1968", which is not UTF-8.
+Qt depends on a UTF-8 locale, and has switched to "C.UTF-8" instead.
+If this causes problems, reconfigure your locale. See the locale(1) manual
+for more information.
+This plugin does not support propagateSizeHints()
+SOAK ops=10947 clipsPlaced=805 maxGap=437ms freezes=0 (600 s)
+SOAK PASS

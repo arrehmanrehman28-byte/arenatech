@@ -3,6 +3,87 @@
 *Verified-phase log (working rule #2). Every entry: build clean (zero
 warnings) → tests → targeted checks → evidence.*
 
+## 2026-10-14 — M8 Polish (sample project, first-run tour, accessibility): verified ✅
+
+**Scope delivered**
+
+1. **Bundled sample project (M8.1)** — `assets/sample_project/` ships a valid
+   `sample-project.aep` (1920×1080 @ 30, one clip, two markers, two subtitle
+   tracks) plus `sample/clip01.mp4` (128 KB, CC0 test fixture). File ▸
+   **Open Sample Project** (`file.openSample`) copies the bundle into
+   `AppLocalDataLocation/sample_project/` (never opened in place, so it can
+   be saved/relinked) and opens it. `QFile::copy` never overwrites, so the
+   copy refreshes the destination first — a re-open must always work
+   (guismoke found the second-run failure).
+2. **First-run tour (M8.2)** — `app/tour.{h,cpp}`: a compact card (bottom
+   right, ~10 s per step, 6 steps ≈ 60 s) walking Media Bin → Timeline →
+   Monitor → Subtitles → Inspector → AI. Each step sets the target widget's
+   `tourTarget` property; the themer draws a 2 px accent ring. Back/Next/Skip
+   at every step; **Help ▸ Replay Tour** replays on demand. First-run flow:
+   welcome dialog → tour, then `firstRunDone` is set. **Latent bug fixed on
+   the way:** `main.cpp` flipped `firstRunDone` *before* `MainWindow`
+   constructed, so the welcome dialog could never appear on a genuine first
+   launch (D-043).
+3. **Accessibility (M8.3)** —
+   - *Focus rings:* QSS `:focus` 2 px accent borders on all standard controls
+     plus the custom `TimelineCanvas`/`PreviewSurface`/strips (QSS has no
+     `outline`; D-041).
+   - *UIA/screen-reader names:* transport, playback-resolution, and all
+     timeline toolbar controls (snap/magnet/markers/zoom/track-height) get
+     `accessibleName` from their existing i18n keys — glyph-only buttons
+     (`+`, `−`, `▶`) were previously unnamed.
+   - *WCAG AA audit:* new `ThemerFixture.AllThemesMeetWcagAaForTextPairs`
+     checks text/muted/success/warning/error on the two main surfaces for
+     **all three themes** (21 pairs). Found one real failure: light-theme
+     success `#1F8A54` on white = **4.36:1**; darkened to `#177345`
+     (**5.87:1**) (D-042). All 21 pairs now ≥ 4.5; high-contrast theme is
+     21:1 primary text.
+   - *Font-size scaling:* `fontScale` 0–3 → 11/13/15/17 pt via
+     `Themer::apply` (verified in guismoke: XL applies 17 pt, restore works).
+   - *DPI 100–300 %:* Qt 6 automatic high-DPI scaling (no legacy
+     `AA::HighDpiScaleFactorRoundingPolicy` overrides; no fixed pixel
+     geometry in the chrome — all layouts are stretch/minimum based).
+   - *Reduce motion:* the only app motion is the tour slide-in; with
+     `reduceMotion()` on the card appears instantly at its final position
+     (D-040). Verified in guismoke both ways.
+4. **Contextual tips** — `MainWindow::tipOnce(id, key)`: status-bar hint
+   shown once per feature (first clip placed, AI first enabled), keyed under
+   `tips/<id>` in settings.
+5. **Soak (exit criterion)** — `arena_guismoke --soak <s> <fixtures>`:
+   real MainWindow under a fuzzed loop (valid mp4, valid wav, 4 KB garbage,
+   missing path × import / add-clip / seek / undo / redo / play-toggle) with
+   a 250 ms event-loop heartbeat; any gap > 2 s counts as a UI freeze.
+   30 s version is in ctest (`Guismoke.Soak`); the full 10-minute run is
+   recorded below.
+
+**Verification**
+
+- Full rebuild: 0 errors, 0 warnings.
+- ctest: **113/113** (was 110; +2 WCAG/QSS themer tests, +1 soak).
+- guismoke: **108 checks, all pass** (85 prior + 23 M8: sample project ×3,
+  tour ×11, reduce-motion ×1, font scaling ×2, UIA names ×3, tips ×2).
+- **Soak (10 min): `SOAK ops=10947 clipsPlaced=805 maxGap=437ms freezes=0 (600 s)`
+  → `SOAK PASS`** — 10,947 fuzzed ops (valid mp4, valid wav, 4 KB garbage,
+  missing path × import/add-clip/seek/undo/redo/play-toggle) with a 250 ms
+  event-loop heartbeat; worst single gap 437 ms, zero > 2 s gaps (full log:
+  `docs/soak_600s.log`).
+
+**Accessibility audit checklist (M8 exit criterion)**
+
+- [x] All standard controls show a visible keyboard focus indicator (accent ring QSS; tested in `FocusRingsAndTourHighlightInQss`).
+- [x] Every primary control has a non-empty `accessibleName` (UIA name) — transport, timeline toolbar, monitor (guismoke counts all `QToolButton`s in the central area: 0 unnamed).
+- [x] WCAG AA text contrast ≥ 4.5:1 for text/muted/status colours on surface0/1 in dark, light, high-contrast (21 pairs; `AllThemesMeetWcagAaForTextPairs`).
+- [x] High-contrast theme: black/white primary (21:1), white border tokens.
+- [x] Font-size scaling: 4 sizes (11/13/15/17 pt) apply live (`applyThemeAndFont`).
+- [x] Reduce-motion setting disables the only app animation (tour slide-in) — both branches tested.
+- [x] DPI 100–300 %: Qt 6 automatic scaling; no hardcoded pixel chrome; layout-driven.
+- [x] No hardcoded user-facing text: all M8 strings (`help.tour`, `tour.*`,
+      `sample.*`, `tip.*`, `view.timeline`, `view.monitor`, `file.openSample`)
+      added to all 8 catalogs (355 → 379 keys × 8, 100 % translated).
+- [x] 10-minute fuzzed import soak: no UI freezes (heartbeat > 2 s = fail):
+      `ops=10947 clipsPlaced=805 maxGap=437ms freezes=0 (600 s)` → PASS.
+
+
 ## 2026-10-14 — M7.1 Local STT (whisper.cpp): verified ✅ (M7 part 1)
 
 **Scope delivered — `stt/` becomes a real, on-demand local transcriber**

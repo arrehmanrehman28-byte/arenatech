@@ -15,6 +15,7 @@ add_library(arena_app_lib STATIC
     commandpalette.cpp
     dialogs.cpp
     exportdialog.cpp
+    tour.cpp
 )
 target_include_directories(arena_app_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(arena_app_lib

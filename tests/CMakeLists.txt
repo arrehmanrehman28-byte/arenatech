@@ -41,4 +41,9 @@ if(ARENA_ENABLE_FFMPEG AND EXISTS "${CMAKE_SOURCE_DIR}/tests/fixtures/clip01.mp4
     add_test(NAME Guismoke.MediaPipeline
              COMMAND arena_guismoke "${CMAKE_SOURCE_DIR}/tests/fixtures/clip01.mp4")
     set_tests_properties(Guismoke.MediaPipeline PROPERTIES TIMEOUT 240)
+    # M8: short fuzzed-import soak with a UI-freeze heartbeat (the full
+    # 10-minute run is recorded in docs/PROGRESS.md).
+    add_test(NAME Guismoke.Soak
+             COMMAND arena_guismoke --soak 30 "${CMAKE_SOURCE_DIR}/tests/fixtures")
+    set_tests_properties(Guismoke.Soak PROPERTIES TIMEOUT 120)
 endif()

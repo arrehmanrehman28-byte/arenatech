@@ -519,23 +519,29 @@ TimelineWidget::TimelineWidget(QWidget *parent) : QWidget(parent)
     m_snap->setCheckable(true);
     m_snap->setChecked(true);
     m_snap->setText(arenaTr("timeline.snap"));
+    m_snap->setAccessibleName(arenaTr("timeline.snap")); // M8: UIA name
     m_magnet = new QToolButton;
     m_magnet->setCheckable(true);
     m_magnet->setText(arenaTr("timeline.magnet"));
+    m_magnet->setAccessibleName(arenaTr("timeline.magnet")); // M8: UIA name
     m_magnet->setEnabled(false); // clips phase enables
     m_markers = new QToolButton;
     m_markers->setCheckable(true);
     m_markers->setText(arenaTr("timeline.markers"));
+    m_markers->setAccessibleName(arenaTr("timeline.markers")); // M8: UIA name
     m_markers->setEnabled(false);
     m_zoomIn = new QToolButton;
     m_zoomIn->setText(QStringLiteral("+"));
+    m_zoomIn->setAccessibleName(arenaTr("timeline.zoomIn")); // M8: UIA name (glyph text)
     m_zoomOut = new QToolButton;
     m_zoomOut->setText(QStringLiteral("−"));
+    m_zoomOut->setAccessibleName(arenaTr("timeline.zoomOut")); // M8: UIA name (glyph text)
     m_trackHeight = new QSlider(Qt::Horizontal);
     m_trackHeight->setRange(32, 160);
     m_trackHeight->setValue(64);
     m_trackHeight->setEnabled(false);
     m_trackHeight->setMaximumWidth(120);
+    m_trackHeight->setAccessibleName(arenaTr("timeline.trackHeight")); // M8: UIA name
     bar->addWidget(m_snap);
     bar->addWidget(m_magnet);
     bar->addWidget(m_markers);

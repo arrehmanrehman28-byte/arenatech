@@ -31,6 +31,7 @@ class KiloClient;
 class AIBudget;
 class Autosave;
 class ExportDialog;
+class Tour;
 class MediaBinWidget;
 class InspectorWidget;
 class SubtitlesWidget;
@@ -53,6 +54,12 @@ public:
     bool testWidgetReady() const { return m_ready; }
     ExportDialog *exportDialog() const { return m_exportDialog; }
 
+    // M8: first-run tour (replayable from Help) + contextual tips
+    // (tipOnce: show bodyKey once per feature id).
+    void showTour();
+    void tipOnce(const QString &id, const QString &bodyKey);
+    Tour *tour() const { return m_tour; }
+
     QString projectPath() const { return m_projectPath; }
     Project *project() const { return m_project ? m_project.get() : nullptr; }
     TimelineWidget *timeline() const { return m_timeline; }
@@ -64,6 +71,9 @@ public:
     // Project file operations (used by UI + tests).
     bool newProject(const NewProjectResult &r);
     bool openProjectFile(const QString &path);
+    // M8: copy the bundled sample project (assets/sample_project) into the
+    // user's data dir and open it — the first-run onboarding path.
+    bool openSampleProject();
     bool saveProjectFile(const QString &path = QString());
     void closeProject();
     QString currentTitle() const;
@@ -218,6 +228,7 @@ private:
 
     // M4: single open export dialog (nullptr when closed).
     ExportDialog *m_exportDialog = nullptr;
+    Tour *m_tour = nullptr; // M8 first-run tour (lazy-created)
 
     // actions
     QAction *m_undoAct = nullptr;

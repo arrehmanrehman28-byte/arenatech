@@ -161,6 +161,21 @@ QString Themer::buildQss(const QString &theme, const QColor &accent) const
                    "border: 1px solid %1; background: %2; }")
                  .arg(border, s1);
     qss += QString("QCheckBox::indicator:checked { background: %1; border-color: %1; }").arg(accentHex);
+    // M8 (D-034/D-041): always-visible keyboard focus rings. QSS has no
+    // `outline`, so a 2 px accent border is the focus indicator. Default accent
+    // #4C8DFF clears WCAG 2.4.7 (3:1 vs adjacent colours) on every shipped
+    // theme; users may re-pick the accent, so keep this rule, not a fixed hue.
+    qss += QString("QPushButton:focus, QToolButton:focus, QComboBox:focus, "
+                   "QSpinBox:focus, QDoubleSpinBox:focus, QCheckBox:focus, "
+                   "QRadioButton:focus, QLineEdit:focus, QPlainTextEdit:focus, "
+                   "QTextEdit:focus, QListView:focus, QTreeView:focus, "
+                   "QTableView:focus, QAbstractSlider:focus { border: 2px solid %1; }")
+                 .arg(accentHex);
+    qss += QString("TimelineCanvas:focus, PreviewSurface:focus, "
+                   "WaveformStrip:focus, ThumbnailStrip:focus { border: 2px solid %1; }")
+                 .arg(accentHex);
+    // M8 tour target highlight (set/unset by Tour via the "tourTarget" prop).
+    qss += QString("QWidget[tourTarget=\"true\"] { border: 2px solid %1; }").arg(accentHex);
     return qss;
 }
 

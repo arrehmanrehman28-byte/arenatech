@@ -1,52 +1,78 @@
 {
-  "accentDefault": "#4C8DFF",
-  "aiAccent": "#9B6DFF",
-  "radius": { "control": 6, "panel": 10 },
-  "spacing": [4, 8, 12, 16, 24, 32],
-  "motion": { "fastMs": 120, "slowMs": 180 },
-  "font": {
-    "families": ["Segoe UI Variable", "Segoe UI", "Noto Sans", "Noto Sans Arabic", "Noto Sans CJK", "Noto Sans Devanagari", "DejaVu Sans"],
-    "mono": ["Cascadia Mono", "Consolas", "Noto Sans Mono", "DejaVu Sans Mono"]
+ "accentDefault": "#4C8DFF",
+ "aiAccent": "#9B6DFF",
+ "radius": {
+  "control": 6,
+  "panel": 10
+ },
+ "spacing": [
+  4,
+  8,
+  12,
+  16,
+  24,
+  32
+ ],
+ "motion": {
+  "fastMs": 120,
+  "slowMs": 180
+ },
+ "font": {
+  "families": [
+   "Segoe UI Variable",
+   "Segoe UI",
+   "Noto Sans",
+   "Noto Sans Arabic",
+   "Noto Sans CJK",
+   "Noto Sans Devanagari",
+   "DejaVu Sans"
+  ],
+  "mono": [
+   "Cascadia Mono",
+   "Consolas",
+   "Noto Sans Mono",
+   "DejaVu Sans Mono"
+  ]
+ },
+ "themes": {
+  "dark": {
+   "surface0": "#14161A",
+   "surface1": "#1B1E24",
+   "surface2": "#232730",
+   "surface3": "#2C313C",
+   "surface4": "#363C49",
+   "text": "#E8EAF0",
+   "textMuted": "#9AA3B2",
+   "border": "#3A4150",
+   "success": "#3DBE7B",
+   "warning": "#E5B454",
+   "error": "#E5534B"
   },
-  "themes": {
-    "dark": {
-      "surface0": "#14161A",
-      "surface1": "#1B1E24",
-      "surface2": "#232730",
-      "surface3": "#2C313C",
-      "surface4": "#363C49",
-      "text": "#E8EAF0",
-      "textMuted": "#9AA3B2",
-      "border": "#3A4150",
-      "success": "#3DBE7B",
-      "warning": "#E5B454",
-      "error": "#E5534B"
-    },
-    "light": {
-      "surface0": "#F4F5F7",
-      "surface1": "#FFFFFF",
-      "surface2": "#EDEFF2",
-      "surface3": "#E2E5EA",
-      "surface4": "#D5D9E0",
-      "text": "#1E2229",
-      "textMuted": "#5C6470",
-      "border": "#C9CED6",
-      "success": "#1F8A54",
-      "warning": "#9A6B00",
-      "error": "#C23B34"
-    },
-    "high-contrast": {
-      "surface0": "#000000",
-      "surface1": "#0D0D0D",
-      "surface2": "#1A1A1A",
-      "surface3": "#262626",
-      "surface4": "#333333",
-      "text": "#FFFFFF",
-      "textMuted": "#D0D0D0",
-      "border": "#FFFFFF",
-      "success": "#4ADE80",
-      "warning": "#FACC15",
-      "error": "#F87171"
-    }
+  "light": {
+   "surface0": "#F4F5F7",
+   "surface1": "#FFFFFF",
+   "surface2": "#EDEFF2",
+   "surface3": "#E2E5EA",
+   "surface4": "#D5D9E0",
+   "text": "#1E2229",
+   "textMuted": "#5C6470",
+   "border": "#C9CED6",
+   "success": "#177345",
+   "warning": "#9A6B00",
+   "error": "#C23B34"
+  },
+  "high-contrast": {
+   "surface0": "#000000",
+   "surface1": "#0D0D0D",
+   "surface2": "#1A1A1A",
+   "surface3": "#262626",
+   "surface4": "#333333",
+   "text": "#FFFFFF",
+   "textMuted": "#D0D0D0",
+   "border": "#FFFFFF",
+   "success": "#4ADE80",
+   "warning": "#FACC15",
+   "error": "#F87171"
   }
+ }
 }

@@ -16,7 +16,10 @@
 #include <QMouseEvent>
 #include <QPixmap>
 #include <QPushButton>
+#include <QElapsedTimer>
+#include <QFile>
 #include <QUuid>
+#include <QThread>
 #include <QTimer>
 #include <cstdio>
 
@@ -25,8 +28,10 @@
 #include "i18n.h"
 #include "mainwindow.h"
 #include "panels.h"
+#include "settings.h"
 #include "themer.h"
 #include "timeline.h"
+#include "tour.h"
 
 using namespace arena;
 
@@ -45,10 +50,107 @@ static void spin(int ms)
     loop.exec();
 }
 
+// M8 soak (exit criterion: no UI freezes in a long fuzzed import soak):
+// drives the real MainWindow with a mix of valid video, valid audio, garbage
+// bytes, and missing files plus timeline ops, while a 250 ms heartbeat
+// records any event-loop gap > 2 s as a freeze.
+static int runSoak(int seconds, const QString &fixturesDir)
+{
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+    qputenv("ARENA_SELFTEST", "1"); // skip the first-run dialog headless
+    int argc = 1;
+    char a0[] = "arena-soak";
+    char *argv[] = {a0, nullptr};
+    QApplication app(argc, argv);
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    if (!I18n::instance().loadDirectory(QStringLiteral(ARENA_I18N_DIR)))
+        fprintf(stderr, "warning: i18n directory not found\n");
+
+    Themer themer;
+    MainWindow w(&themer);
+    w.show();
+
+    const QString goodVid = fixturesDir + QStringLiteral("/clip01.mp4");
+    const QString goodAud = fixturesDir + QStringLiteral("/jfk.wav");
+    const QString garbage = fixturesDir + QStringLiteral("/garbage.bin");
+    if (!QFile::exists(garbage))
+        if (auto *f = new QFile(garbage)) {
+            f->open(QIODevice::WriteOnly);
+            f->write("definitely not a media file, just bytes to fuzz with ");
+            f->write(QByteArray(4096, '\x00'));
+            f->close();
+            delete f;
+        }
+    const QString missing = fixturesDir + QStringLiteral("/definitely_missing_12345.mp4");
+    const QStringList pool = {goodVid, goodAud, garbage, missing, goodVid};
+
+    // Freeze guard: 250 ms heartbeat; any gap > 2000 ms counts as a freeze.
+    QElapsedTimer clock;
+    clock.start();
+    qint64 maxGapMs = 0;
+    qint64 lastTick = 0;
+    int freezes = 0;
+    auto *hb = new QTimer(&app);
+    QObject::connect(hb, &QTimer::timeout, [&] {
+        const qint64 t = clock.elapsed();
+        const qint64 gap = t - lastTick;
+        if (gap > maxGapMs) maxGapMs = gap;
+        if (gap > 2000) ++freezes;
+        lastTick = t;
+    });
+    hb->start(250);
+
+    QElapsedTimer budget;
+    budget.start();
+    long ops = 0;
+    int clipsPlaced = 0;
+    unsigned seed = 0x9E3779B9u;
+    auto rnd = [&](int n) {
+        seed = seed * 1103515245u + 12345u;
+        return int((seed >> 16) % n);
+    };
+
+    while (budget.elapsed() < seconds * 1000LL) {
+        switch (rnd(6)) {
+        case 0: w.importMedia({pool.at(rnd(pool.size()))}); ++ops; break;
+        case 1:
+            w.addClipToTimeline(goodVid);
+            ++ops;
+            if (w.project() && w.project()->tracks.first().clips.size() > clipsPlaced)
+                clipsPlaced = w.project()->tracks.first().clips.size();
+            break;
+        case 2: w.seekToFrame(rnd(300)); ++ops; break;
+        case 3: w.undo(); ++ops; break;
+        case 4: w.redo(); ++ops; break;
+        case 5:
+            w.togglePlayback();
+            QThread::msleep(150);
+            w.togglePlayback();
+            ++ops;
+            break;
+        }
+        // Pump so the heartbeat timer can fire between operations.
+        QCoreApplication::processEvents(QEventLoop::WaitForMoreEvents, 50);
+        QThread::msleep(10);
+    }
+    hb->stop();
+
+    printf("SOAK ops=%ld clipsPlaced=%d maxGap=%lldms freezes=%d (%d s)\n",
+           ops, clipsPlaced, (long long)maxGapMs, freezes, seconds);
+    const bool pass = freezes == 0 && ops > 100 && clipsPlaced >= 1;
+    printf(pass ? "SOAK PASS\n" : "SOAK FAIL\n");
+    return pass ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
+    // M8 soak mode: arena_guismoke --soak <seconds> <fixtures-dir>
+    for (int i = 1; i + 1 < argc; ++i)
+        if (QString::fromLocal8Bit(argv[i]) == QLatin1String("--soak"))
+            return runSoak(QString::fromLocal8Bit(argv[i + 1]).toInt(),
+                           QString::fromLocal8Bit(argv[i + 2]));
     if (argc < 2) {
-        fprintf(stderr, "usage: arena_guismoke <media-file>\n");
+        fprintf(stderr, "usage: arena_guismoke <media-file> | --soak <seconds> <fixtures-dir>\n");
         return 2;
     }
     qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -690,6 +792,97 @@ int main(int argc, char **argv)
                 .array();
             check(w.applyAiActions(oob) == 0, "M7: out-of-range index applies nothing");
         }
+    }
+
+    // --- M8: polish — sample project, tour, reduce motion, font scale, ---
+    // --- UIA names, contextual tips.                                      ---
+    {
+        // 1) Bundled sample project: copies into the data dir and opens.
+        const bool sampleOk = w.openSampleProject();
+        check(sampleOk, "M8: sample project opens");
+        Project *sp = w.project();
+        check(sp != nullptr && sp->name == QLatin1String("Sample Project"),
+              "M8: sample project name loaded");
+        bool sampleClipOk = false;
+        if (sp)
+            for (const Track &t : sp->tracks)
+                for (const Clip &c : t.clips)
+                    if (c.sourceRef == QLatin1String("sample/clip01.mp4"))
+                        sampleClipOk = true;
+        check(sampleClipOk, "M8: sample clip source resolves");
+
+        // 2) First-run tour: 6 steps, target highlight moves, back/next/skip,
+        //    and replay on demand (Help > Tour).
+        check(w.tour() == nullptr, "M8: tour is lazily created");
+        w.showTour();
+        Tour *tour = w.tour();
+        check(tour != nullptr && tour->isRunning() && tour->count() == 6,
+              "M8: tour starts with 6 steps");
+        check(tour->index() == 0 && tour->targetObjectName() == QLatin1String("MediaBinDock"),
+              "M8: step 1 targets the media bin");
+        QWidget *mb = w.findChild<QWidget *>(QLatin1String("MediaBinDock"));
+        check(mb != nullptr && mb->property("tourTarget").toBool(),
+              "M8: target widget highlighted");
+        tour->next();
+        check(tour->index() == 1 && tour->targetObjectName() == QLatin1String("TimelineWidget"),
+              "M8: step 2 targets the timeline");
+        check(mb != nullptr && !mb->property("tourTarget").toBool(),
+              "M8: previous target unhighlighted");
+        tour->back();
+        check(tour->index() == 0, "M8: back returns to step 1");
+        for (int i = 0; i < 6 && !tour->atLast(); ++i) tour->next();
+        check(tour->atLast() && tour->index() == 5, "M8: advances to the last step");
+        tour->skip();
+        check(!tour->isRunning(), "M8: skip ends the tour");
+        w.showTour();
+        check(w.tour() == tour && w.tour()->isRunning() && w.tour()->index() == 0,
+              "M8: tour replays on demand");
+        w.tour()->skip();
+
+        // 3) Reduce motion: with the setting on, the card appears instantly at
+        //    its final position (no slide-in tween).
+        Settings &st = Settings::instance();
+        const bool rmPrev = st.reduceMotion();
+        st.setReduceMotion(true);
+        w.showTour();
+        const int expX = qMax(8, w.width() - w.tour()->width() - 24);
+        check(w.tour()->pos().x() == expX, "M8: reduce-motion skips the slide-in");
+        w.tour()->skip();
+        st.setReduceMotion(rmPrev);
+
+        // 4) Font-size scaling follows the setting (11/13/15/17 pt).
+        const int fsPrev = st.fontScale();
+        st.setFontScale(3);
+        w.applyThemeAndFont();
+        check(QApplication::font().pointSize() == 17,
+              "M8: extra-large font scale applies (17 pt)");
+        st.setFontScale(fsPrev);
+        w.applyThemeAndFont();
+        check(QApplication::font().pointSize() != 17, "M8: font scale restored");
+
+        // 5) UIA / screen-reader names on the primary controls.
+        QWidget *monitorBox = w.findChild<QWidget *>(QLatin1String("MonitorBox"));
+        check(monitorBox != nullptr
+                  && monitorBox->accessibleName() == arenaTr("view.monitor"),
+              "M8: monitor has a UIA name");
+        check(!w.timeline()->accessibleName().isEmpty(),
+              "M8: timeline has a UIA name");
+        int toolButtons = 0, unnamed = 0;
+        const auto centralButtons = w.centralWidget() ? w.centralWidget()->findChildren<QToolButton *>()
+                                                      : QList<QToolButton *>();
+        for (QToolButton *b : centralButtons) {
+            ++toolButtons;
+            if (b->accessibleName().isEmpty()) ++unnamed;
+        }
+        check(toolButtons >= 5 && unnamed == 0, "M8: transport buttons all named for UIA");
+
+        // 6) Contextual tips: shown once per feature, never again.
+        st.setRaw("tips/m8test", false);
+        w.tipOnce("m8test", "tip.firstClip");
+        check(st.raw("tips/m8test").toBool(), "M8: tip recorded as seen");
+        w.tipOnce("m8test", "tip.firstClip"); // second call: no-op (already seen)
+        check(st.raw("tips/m8test").toBool(), "M8: tip stays seen after repeat");
+        st.setRaw("tips/m8test", false);
     }
 
     // Give background workers (export worker thread, proxy encoder) a moment

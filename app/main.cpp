@@ -79,7 +79,9 @@ int main(int argc, char **argv)
         if (os.value(QStringLiteral("AppsUseLightTheme")).toInt(-1) == 1)
             st.setTheme(QStringLiteral("light"));
 #endif
-        st.setFirstRunDone();
+        // Note: firstRunDone is flipped by MainWindow::showWelcomeIfNeeded()
+        // after the welcome dialog + first-run tour (M8), not here — flipping
+        // it earlier suppressed the welcome flow on genuine first launch.
     }
 
     themer.apply(&app, st.theme(), st.accentColor(), st.fontScale());

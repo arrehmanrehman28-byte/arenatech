@@ -10,3 +10,6 @@ CMakeUserPresets.json
 .config/
 .local/
 .sudo_as_admin_successful
+
+# M8 soak creates a deterministic fuzz fixture on demand
+tests/fixtures/garbage.bin

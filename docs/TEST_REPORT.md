@@ -269,3 +269,39 @@ New known limitations (M7):
   preselected; it never starts an export by itself (D-037).
 - The STT transcript is in-memory per project (D-036): closing the
   project loses it until re-transcribed.
+
+## Addendum — M8 Polish (2026-10-14)
+
+Per-milestone verification evidence lives in `PROGRESS.md`; this report
+keeps the M0 snapshot above. Current totals after M8:
+
+- **ctest: 113/113 pass** (112 unit + guismoke + soak), **0 warnings** on a
+  clean full rebuild. Test count grew 110 → 113 (+3).
+- New suites (M8, `test_themer.cpp`):
+  `ThemerFixture.AllThemesMeetWcagAaForTextPairs` (21 fg/bg pairs × 3 themes,
+  all ≥ 4.5:1 — caught the real light-theme `success #1F8A54` at 4.36:1,
+  fixed to `#177345` / 5.87:1, D-042) and
+  `ThemerFixture.FocusRingsAndTourHighlightInQss`.
+- guismoke: **108 checks, all pass** (85 prior + 23 M8): sample project
+  copy-and-open (name + clip source), tour lifecycle (6 steps, target
+  highlight moves between steps, back/next/skip, lazy creation, replay on
+  demand), reduce-motion (no slide-in, final position), font scaling
+  (XL = 17 pt applies and restores), UIA names (monitor, timeline, and *all*
+  central `QToolButton`s named — timeline toolbar was found unnamed and
+  fixed), contextual tips (once-per-feature).
+- **10-minute fuzzed import soak (M8 exit criterion):**
+  `arena_guismoke --soak 600 tests/fixtures` →
+  `SOAK ops=10947 clipsPlaced=805 maxGap=437ms freezes=0 (600 s)` →
+  **SOAK PASS** (250 ms heartbeat; any event-loop gap > 2 s = freeze). A
+  30 s version runs in ctest as `Guismoke.Soak`. Full log:
+  `docs/soak_600s.log`.
+
+New known limitations (M8):
+
+- The tour card is positioned bottom-right in both LTR and RTL (no
+  mirroring); acceptable for a first-run aid, noted for a future pass.
+- DPI 100–300 % relies on Qt 6 automatic scaling; verified by design (no
+  fixed-pixel chrome) and by the font-scale path, not by a per-DPI pixel
+  matrix (no display available in CI).
+- `QFile::copy` never overwrites: `openSampleProject` now removes the
+  destination before copying, so re-opening the sample always refreshes it.
