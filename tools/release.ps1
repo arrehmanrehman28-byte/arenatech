@@ -66,7 +66,8 @@ $cmakeArgs = @(
     "-DARENA_BUILD_TESTS=ON",
     "-DARENA_ENABLE_FFMPEG=" + $(if ($WithMedia) { "ON" } else { "OFF" }),
     "-DARENA_ENABLE_WHISPER=" + $(if ($WithMedia) { "ON" } else { "OFF" }),
-    "-DARENA_BUILD_DATE=" + (Get-Date -Format "yyyy-MM-dd HH:mm UTC")
+    # Quoted: the value contains spaces, which CMake would otherwise split.
+    '-DARENA_BUILD_DATE="' + (Get-Date -Format "yyyy-MM-dd HH:mm UTC") + '"'
 )
 if ($FfmpegDir) { $cmakeArgs += "-DARENA_FFMPEG_DIR=$FfmpegDir" }
 # vcpkg toolchain when VCPKG_ROOT is set (CI installs qtbase/ffmpeg there).

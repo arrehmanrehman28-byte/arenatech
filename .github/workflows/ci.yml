@@ -133,8 +133,10 @@ jobs:
           $vsPath = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           if (-not $vsPath) { throw "Visual Studio with MSVC not found" }
           $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+          # Export everything EXCEPT VCPKG*: vcvars64 sets VCPKG_ROOT to the
+          # VS-bundled vcpkg, which must not clobber our C:\vcpkg.
           cmd /c "`"$vcvars`" >nul && set" | ForEach-Object {
-            if ($_ -match "^([^=]+)=(.*)$") {
+            if ($_ -match "^([^=]+)=(.*)$" -and $matches[1] -notlike "VCPKG*") {
               Add-Content -Path $env:GITHUB_ENV -Value "$($matches[1])=$($matches[2])"
             }
           }
