@@ -61,8 +61,11 @@ else()
                 endif()
                 if(NOT TARGET ${_c})
                     add_library(${_c} SHARED IMPORTED)
+                    # MSVC shared layout: lib/<name>.lib is the import
+                    # library (IMPORTED_IMPLIB); the runtime DLL (bin/) is
+                    # resolved at runtime via PATH / the staged payload.
                     set_target_properties(${_c} PROPERTIES
-                        IMPORTED_LOCATION "${_lib}")
+                        IMPORTED_IMPLIB "${_lib}")
                 endif()
                 list(APPEND AV_LIBRARIES ${_c})
             endforeach()
