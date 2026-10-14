@@ -9,6 +9,7 @@
 #include <QUrl>
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QIcon>
 #include <QTimer>
 
 namespace arena {
@@ -114,7 +115,12 @@ AboutDialog::AboutDialog(QWidget *parent) : QDialog(parent)
 {
     setWindowTitle(arenaTr("dlg.about.title"));
     setMinimumWidth(420);
+    setWindowIcon(QIcon(QStringLiteral(":/icon/app_icon.png")));
     auto *lay = new QVBoxLayout(this);
+    // M9: app icon at the top of the About dialog (same asset as the window).
+    auto *icon = new QLabel(this);
+    icon->setPixmap(QIcon(QStringLiteral(":/icon/app_icon.png")).pixmap(96, 96));
+    icon->setAlignment(Qt::AlignCenter);
     auto *name = new QLabel(QStringLiteral("Arena Edit"));
     QFont nf = name->font();
     nf.setPointSizeF(nf.pointSizeF() + 10);
@@ -139,6 +145,7 @@ AboutDialog::AboutDialog(QWidget *parent) : QDialog(parent)
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok);
     buttons->button(QDialogButtonBox::Ok)->setText(arenaTr("dlg.close"));
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    lay->addWidget(icon);
     lay->addWidget(name);
     lay->addWidget(ver);
     lay->addWidget(license);

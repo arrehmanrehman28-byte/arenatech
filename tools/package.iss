@@ -26,6 +26,8 @@ OutputBaseFilename=ArenaEdit-{#MyAppVersion}-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; Installer wizard + Start-Menu icon: the app icon (assets/icon/app_icon.ico).
+SetupIconFile=..\assets\icon\app_icon.ico
 ArchitecturesInstallIn64BitMode=x64compatible
 ; Windows 10/11 (64-bit) only.
 MinVersion=10.0

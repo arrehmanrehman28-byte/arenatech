@@ -14,7 +14,9 @@
 #include <QApplication>
 #include <QGuiApplication>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QIcon>
 #include <QUuid>
 #include <QTemporaryDir>
 #include <cstdio>
@@ -45,6 +47,9 @@ int main(int argc, char **argv)
     QApplication::setApplicationName(QStringLiteral("ArenaEdit"));
     QApplication::setApplicationDisplayName(QStringLiteral("Arena Edit"));
     QApplication::setApplicationVersion(QStringLiteral(ARENA_VERSION));
+    // App icon (M9): embedded via app.qrc so the window/title bar is branded
+    // from any run directory; the .rc carries the same icon for the exe file.
+    app.setWindowIcon(QIcon(QStringLiteral(":/icon/app_icon.png")));
 
     Logger::init();
 

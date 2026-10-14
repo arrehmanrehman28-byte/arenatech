@@ -64,6 +64,22 @@ warnings) → tests → targeted checks → evidence.*
 | Artifact uploaded in CI | ✅ linux (portable + benchmark.txt) + windows (Setup.exe + portable) jobs; full-media Windows artifact needs the FFmpeg prefix (D-044) |
 
 
+**M9.1 — Application icon (2026-10-14, user request)**
+
+- Generated the app icon (AI-generated, CC0 — see THIRD_PARTY.md):
+  1024 px `assets/icon/app_icon.png` + 8-size hybrid
+  `assets/icon/app_icon.ico` (BMP entries 16–128 for Explorer-safe small
+  icons, PNG 256).
+- Wired everywhere: `app/arenaedit.rc` (exe file icon + VERSIONINFO with
+  "Arena Edit" / credit), `app/app.qrc` (Qt window/title-bar icon, all
+  platforms — verified embedded in the built binary), About dialog (96 px),
+  Inno installer `SetupIconFile`. `CMAKE_AUTORCC` on; `.rc` compiled on
+  WIN32 only.
+- So the Windows build now needs no extra icon step: `build.ps1` produces
+  `ArenaEdit.exe` carrying the icon, and `iscc tools/package.iss` packages
+  a branded installer. The exe itself is still built by the Windows
+  pipeline (D-044) — this sandbox has no MSVC/Qt-for-Windows cross-toolchain.
+
 ## 2026-10-14 — M8 Polish (sample project, first-run tour, accessibility): verified ✅
 
 **Scope delivered**

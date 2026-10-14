@@ -9,6 +9,7 @@
 | Inno Setup | 6 (packaging tool, not shipped) | installer | **Inno Setup License** (freeware) |
 | Ninja, CMake | build tools | build | MIT / BSD-3-Clause |
 | Lucide-style icons | `assets/icons/` (21 SVGs, hand-authored in Lucide's 24 px/2 px stroke style) | UI icons | **CC BY 4.0** (Lucide) — attribution kept in this file |
+| App icon (M9) | `assets/icon/app_icon.{png,ico}` (1024 px PNG source; 8-size hybrid .ico: BMP 16–128, PNG 256) | window/title-bar icon, exe file icon (`.rc`), installer icon, About dialog | AI-generated for this project, no third-party assets — **CC0** (public-domain dedication) |
 | Segoe UI Variable, Cascadia Mono | Windows system fonts (no copy bundled) | typography | Microsoft fonts, licensed with Windows |
 | Noto Sans / Noto Sans Arabic / Noto Sans CJK / Noto Sans Devanagari | system-installed (no copy bundled in M0) | script fallbacks | **OFL 1.1** |
 | Kilo Gateway | service (api.kilo.ai), OpenAI-compatible | AI automation (opt-in, text-only) | service terms of https://api.kilo.ai; no code shipped |

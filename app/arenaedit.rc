@@ -1,0 +1,31 @@
+// Arena Edit — Windows resources (icon + file version info).
+// Branding: "Arena Edit" — Made by arenatechofficial.pages.dev
+#include <windows.h>
+
+IDI_APPICON ICON "..\\assets\\icon\\app_icon.ico"
+
+1 VERSIONINFO
+FILEVERSION     0,1,0,0
+PRODUCTVERSION  0,1,0,0
+FILEOS          0x40004
+FILETYPE        0x1
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "arenatechofficial.pages.dev\0"
+            VALUE "FileDescription",  "Arena Edit — lightweight, multi-language, AI-assisted video editor\0"
+            VALUE "FileVersion",      "0.1.0.0\0"
+            VALUE "InternalName",     "ArenaEdit\0"
+            VALUE "LegalCopyright",   "Made by arenatechofficial.pages.dev\0"
+            VALUE "OriginalFilename", "ArenaEdit.exe\0"
+            VALUE "ProductName",      "Arena Edit\0"
+            VALUE "ProductVersion",   "0.1.0.0\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 0x04B0
+    END
+END

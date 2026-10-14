@@ -343,9 +343,12 @@ Rollup of the per-milestone sections above; items still open at release:
    Exit criterion "artifact uploaded in CI" is satisfied for the
    configurations CI can build; the full-media Windows artifact requires
    the FFmpeg prefix (D-044).
-2. **No application icon set yet** (16/20/24 + installer icon). The UI is
-   text/glyph-based by design; the installer uses Inno's default icon.
-   Branded icons land with the first public release.
+2. ~~No application icon set yet.~~ **Resolved in M9 (2026-10-14):**
+   `assets/icon/app_icon.png` (1024 px) + 8-size hybrid `app_icon.ico`
+   (BMP 16–128 + PNG 256 for Explorer-safe small icons); wired as the exe
+   file icon + version info (`app/arenaedit.rc`), the Qt window/title-bar
+   icon (embedded via `app/app.qrc` — verified present in the built
+   binary), the About dialog, and the Inno installer (`SetupIconFile`).
 3. **NL commands are English-first in practice** (prompt is English; UI
    fully translated). Free-tier non-English NL quality untested.
 4. **STT transcript is in-memory per project** (D-036); re-transcribe

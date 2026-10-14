@@ -1,0 +1,6 @@
+<RCC>
+  <!-- App icon for the Qt window/title-bar (all platforms, any run dir). -->
+  <qresource prefix="/icon">
+    <file alias="app_icon.png">../assets/icon/app_icon.png</file>
+  </qresource>
+</RCC>

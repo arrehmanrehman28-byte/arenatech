@@ -34,6 +34,13 @@ target_compile_definitions(arena_app_lib PUBLIC
 
 add_executable(arenaedit main.cpp)
 target_link_libraries(arenaedit PRIVATE arena_app_lib)
+# App icon: embedded PNG for the Qt window icon (all platforms)...
+target_sources(arenaedit PRIVATE app.qrc)
+# ...and on Windows the .rc gives the exe its file icon + version info
+# (shown by Explorer / File Properties) — brand requirement.
+if(WIN32)
+    target_sources(arenaedit PRIVATE arenaedit.rc)
+endif()
 
 if(WIN32)
     set_target_properties(arenaedit PROPERTIES OUTPUT_NAME "ArenaEdit" WIN32_EXECUTABLE TRUE)
