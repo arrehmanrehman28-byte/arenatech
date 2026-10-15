@@ -37,8 +37,31 @@ gate at **compile**.
 - OFF config (local reproduction of the Windows core gate): 0 warnings,
   ctest **104/104** (7 MediaM1 tests excluded by design; JFK STT skips
   without the model).
-- GitHub: both workflows re-run on the pushed commit — results below
-  (updated after the runs complete).
+**GitHub** — CI-driven loop, each round a fresh class of Windows-only
+failure exposed by the core gate (the gate is the only Windows *test*
+compile, so it keeps peeling the next layer):
+
+- M9.18 push: gate failed at `tests/test_core.cpp` — `utime.h` is
+  POSIX-only (C1083). **M9.19**: cross-platform `setMtime()` helper.
+- M9.19 push: C2061 `_time64_t` / C2664 `_utimbuf`→`__utimbuf64`
+  (first pass named the type without `<time.h>` and used the 32-bit
+  struct). **M9.19.1**: `struct __utimbuf64` with plain assignment,
+  types taken from MSVC's own error text; the tempting Qt-native
+  file-time setter was checked and does not exist (no invented APIs).
+- M9.19.1 push: `app/main.cpp(84)` C2664 — `QVariant::toInt(-1)`;
+  `toInt` takes a `bool*` (Clang never compiled this `#ifdef Q_OS_WIN`
+  block, so it survived since M8). **M9.20**: `toInt(&ok)`. Also
+  pre-empted from the same log: C4099 (`Project` forward-declared as
+  `class` in aipanel.h, defined `struct`), C4456 (`row` shadow →
+  `sttRow`), and **psapi** added to `arena_core` (`GetProcessMemoryInfo`
+  in util.cpp had never been linked — the exes had never finished
+  linking in CI before).
+- Result: Linux job **GREEN** (zero-warning gate, 113/113, selftest,
+  benchmark, artifact); Windows core gate running the first-ever
+  complete build on a runner (vcpkg binary cache hit in 7 s) — final
+  verdict pending. Tag `v0.1.0` (pushed to start the first release
+  attempt) sits on the pre-utime commit and will be force-moved to the
+  green commit once the gate passes.
 
 **Note** — workspace re-synced to remote HEAD (M9.17) before this work;
 `/tmp` toolchain restored via `tools/restore_env.py` after a sandbox reset.
