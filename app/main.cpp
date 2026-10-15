@@ -81,7 +81,10 @@ int main(int argc, char **argv)
 #ifdef Q_OS_WIN
         QSettings os(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
                      QSettings::NativeFormat);
-        if (os.value(QStringLiteral("AppsUseLightTheme")).toInt(-1) == 1)
+        // QVariant::toInt takes a bool* out-parameter (no default-value
+        // overload) — MSVC enforces that strictly.
+        bool themeOk = false;
+        if (os.value(QStringLiteral("AppsUseLightTheme")).toInt(&themeOk) == 1)
             st.setTheme(QStringLiteral("light"));
 #endif
         // Note: firstRunDone is flipped by MainWindow::showWelcomeIfNeeded()

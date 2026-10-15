@@ -29,7 +29,7 @@ namespace arena {
 
 class KiloClient;
 class Settings;
-class Project;
+struct Project;
 
 // The four M6 AI tasks + the M7 NL command.
 enum class AiTaskType { Translate, Chapters, Titles, Cuts, Command };

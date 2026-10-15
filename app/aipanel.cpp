@@ -370,7 +370,7 @@ AiPanel::AiPanel(KiloClient *client, Settings &settings, QWidget *parent)
         auto *gl = new QVBoxLayout(m_sttBox);
         gl->setContentsMargins(8, 8, 8, 8);
         gl->setSpacing(4);
-        auto *row = new QHBoxLayout;
+        auto *sttRow = new QHBoxLayout;
         m_sttModel = new QComboBox;
         for (const WhisperModelInfo &m : Transcriber::models())
             m_sttModel->addItem(QStringLiteral("%1 — %2 MB").arg(m.label)
@@ -384,10 +384,10 @@ AiPanel::AiPanel(KiloClient *client, Settings &settings, QWidget *parent)
         m_sttView->setReadOnly(true);
         m_sttView->setMaximumHeight(96);
         m_sttView->setPlaceholderText(arenaTr("panel.ai.stt.placeholder"));
-        row->addWidget(new QLabel(arenaTr("panel.ai.stt.model")));
-        row->addWidget(m_sttModel, 1);
-        row->addWidget(m_sttButton);
-        gl->addLayout(row);
+        sttRow->addWidget(new QLabel(arenaTr("panel.ai.stt.model")));
+        sttRow->addWidget(m_sttModel, 1);
+        sttRow->addWidget(m_sttButton);
+        gl->addLayout(sttRow);
         gl->addWidget(m_sttStatus);
         gl->addWidget(m_sttView);
     }
