@@ -1,36 +1,21 @@
 // Theme tokens: single source of truth, accent propagation, contrast basics.
+// These tests are pure data/string math (JSON tokens, QSS text, WCAG
+// luminance ratios) — no widgets, no fonts. Deliberately NO Qt GUI
+// application is constructed: on headless Windows CI runners even the
+// offscreen QGuiApplication/QApplication constructor hangs (M9.22), and
+// nothing in this file needs one (it used to, defensively — removed).
 #include <gtest/gtest.h>
 #include "themer.h"
-#include <QtWidgets/QApplication>
 #include <QColor>
 #include <cmath>
 
 using namespace arena;
 
 namespace {
-QApplication *ensureApp()
-{
-    static QApplication *app = [] {
-        QApplication *instance = nullptr;
-        if (QApplication::instance() == nullptr) {
-            int argc = 1;
-            char a0[] = "arena-tests";
-            char *argv[] = {a0, nullptr};
-            qputenv("QT_QPA_PLATFORM", "offscreen");
-            instance = new QApplication(argc, argv);
-        } else {
-            instance = static_cast<QApplication *>(QApplication::instance());
-        }
-        return instance;
-    }();
-    return app;
-}
-
 class ThemerFixture : public ::testing::Test {
 protected:
     void SetUp() override
     {
-        ensureApp();
         QString err;
         const bool ok = t.load(ARENA_THEME_JSON, &err);
         ASSERT_TRUE(ok) << err.toStdString();

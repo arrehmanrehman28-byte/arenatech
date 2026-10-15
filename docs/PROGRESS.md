@@ -64,6 +64,17 @@ compile, so it keeps peeling the next layer):
   headless `QFontDatabase` probe on Windows never returns). **M9.21**:
   suite gated `#if defined(__linux__)`, `ctest --timeout 300` in both
   workflows, `timeout-minutes` job backstops.
+- Result round 2: the gate got past BurnIn but every `ThemerFixture`
+  test died at the new 300 s ctest timeout — its `SetUp` constructed a
+  `QApplication` (offscreen) that the tests never used (pure JSON/QSS/
+  color-math). The headless Windows runners hang on GUI application
+  construction itself. **M9.22**: `ensureApp()` removed from the themer
+  tests; `--selftest` restructured as a `QCoreApplication`-only headless
+  core smoke test (no `MainWindow`; window/RTL checks are guismoke's
+  job on Linux) with an honest media-layer check (`consistent (on/off)`,
+  probe checks skipped when the layer is absent — core builds now
+  selftest green). Local: ON selftest PASS (17 checks incl. real media
+  pipeline), OFF selftest PASS (honest skip), ctest 113/113 + 104/104.
 - Tag `v0.1.0` (pushed to start the first release attempt) sits on the
   pre-utime commit and will be force-moved to the green commit once the
   gate passes.
