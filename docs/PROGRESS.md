@@ -102,25 +102,42 @@ compile, so it keeps peeling the next layer):
   healthy (vcpkg cached, whisper + ggml compiled, 130 ninja targets),
   but it died at **build-time test discovery**: `gtest_discover_tests`
   executes `arena_tests.exe` during the build and it exited
-  `0xc0000135` (STATUS_DLL_NOT_FOUND). Root cause: vcpkg's automatic
-  post-build DLL copy only stages the DLLs of **directly imported**
-  targets — it missed `Qt6Widgets.dll` (direct import via
-  arena_app_theme → Qt6::Widgets) and `libssl-3-x64.dll` (Qt6Network
-  transitive). The core gate survived the same gap only because the
-  workflow puts vcpkg's bin on PATH; discovery on a bare PATH can't be
-  relied on. The same gap also meant the staged portable payload was
-  missing ICU/OpenSSL/FFmpeg transitive DLLs AND — worse — the Qt
-  **platform plugin** (`platforms\qwindows.dll` lives in vcpkg's
-  `plugins\` tree, never next to the exe): the packaged GUI could not
-  have started on a clean machine.
-- **M9.26** (two changes): (1) root CMakeLists now stages the
-  *complete* vcpkg triplet `bin\*.dll` set next to **every** executable
+  `0xc0000135` (STATUS_DLL_NOT_FOUND). **Root cause (found in the
+  configure output of the failed run)**: whisper's
+  `cmake_minimum_required(VERSION 3.5)` downgrades CMake policy
+  **CMP0077 to OLD inside its scope**, where `option(BUILD_SHARED_LIBS
+  ...)` does not honor — it *clears* — the normal variable our CMake
+  sets (`set(BUILD_SHARED_LIBS OFF)` before `add_subdirectory`) and
+  recreates the cache entry at its default: **ON** on non-MINGW
+  Windows. So whisper + ggml (ggml-base, ggml-cpu, ggml, whisper) were
+  silently built as **shared** libraries (`build-release\bin\whisper.dll`
+  & co.), and the exes link them through import libraries — at runtime
+  the loader looks for `whisper.dll` next to the exe and on PATH, and
+  finds it in neither (`build-release\bin` is on neither) → 0xc0000135.
+  Reproduced locally with a minimal two-directory CMake project
+  (3.5-minimum child: SHARED; same tree with a FORCE'd cache OFF:
+  STATIC under both CMP0077 behaviors). A second, independent latent
+  bug surfaced while analyzing the run: the staged portable payload was
+  missing ICU/OpenSSL/freetype transitive DLLs (staging name-filter
+  `Qt6|MSVCP|...` — the run's own log shows `staged 9 runtime DLLs
+  (incl. platforms\qwindows.dll: False)`) AND the Qt **platform
+  plugin** (`platforms\qwindows.dll` lives in vcpkg's `plugins\` tree,
+  never next to the exe): even once discovery passes, the packaged GUI
+  could not have started on a clean machine.
+- **M9.26** (three changes): (1) **whisper/ggml forced static,
+  policy-proof**: `set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)`
+  before `add_subdirectory(third_party/whisper)` — the OLD-policy
+  `option()` only creates a cache entry when one is *missing*, so the
+  pre-set OFF survives, and the NEW-policy path honors the normal
+  variable; static also removes a whole class of runtime-DLL hazards
+  from the STT path. (2) root CMakeLists now stages the *complete*
+  vcpkg triplet `bin\*.dll` set next to **every** executable
   (arenaedit, arena_ai_live, arena_stt_check, arena_export_bench,
   arena_tests, arena_guismoke) via per-DLL `copy_if_different`
   POST_BUILD commands — exes are self-contained in the build tree, so
   discovery, ctest, and selftest no longer depend on PATH; the vcpkg
   bin dir is derived from `Qt6::Core`'s import location (no env
-  assumptions). (2) release.ps1 staging now copies the complete DLL
+  assumptions). (3) release.ps1 staging now copies the complete DLL
   set flat from the exe's directory (replacing the `Qt6|MSVCP|...`
   name filter) and explicitly installs the platform plugin from
   `<vcpkg>\installed\x64-windows\plugins\platforms\qwindows.dll` into

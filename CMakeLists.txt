@@ -112,7 +112,18 @@ if(ARENA_ENABLE_WHISPER)
     set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
     set(WHISPER_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
-    set(BUILD_SHARED_LIBS OFF) # whisper defaults to ON on Linux
+    # whisper must be STATIC. The plain `set(BUILD_SHARED_LIBS OFF)` alone
+    # is NOT enough: whisper's own cmake_minimum_required(VERSION 3.5)
+    # downgrades policy CMP0077 to OLD in its scope, where option()
+    # IGNORES (and clears!) the normal variable and recreates the cache
+    # entry at its default — ON on non-MINGW Windows. That silently built
+    # whisper.dll/ggml*.dll, whose runtime imports the test/app exes could
+    # not resolve at build time (STATUS_DLL_NOT_FOUND at test discovery).
+    # A FORCE-updated cache entry survives the OLD-policy option() (which
+    # only creates a cache entry when one is missing), so both policy
+    # behaviors now yield static libraries.
+    set(BUILD_SHARED_LIBS OFF)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Arena Edit: vendored whisper/ggml build static" FORCE)
     if(NOT MSVC)
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
