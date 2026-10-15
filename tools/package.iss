@@ -67,10 +67,8 @@ Filename: "{app}\ArenaEdit.exe"; Description: "{cm:LaunchProgram,{#StringChange(
 [UninstallDelete]
 Type: filesandordirs; Name: "{localappdata}\ArenaEdit"
 
-[Code]
-// Surface the brand credit on the finished page.
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then
-    WizardForm.WizardSmallCaptionLabel.Caption := '{#MyAppName} — Made by arenatechofficial.pages.dev';
-end;
+; Brand credit on the installer pages comes from AppPublisher /
+; AppPublisherURL above (the standard wizard surfaces it); a [Code]
+; tweak of WizardSmallCaptionLabel was rejected by the runner's Inno
+; (auto-declared wizard-control identifiers are version-dependent), and
+; the About dialog / portable launcher carry the credit line too.
