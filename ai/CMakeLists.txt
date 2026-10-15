@@ -6,4 +6,7 @@ add_library(arena_ai STATIC
     keystore.cpp
 )
 target_include_directories(arena_ai PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(arena_ai PUBLIC Qt6::Core Qt6::Network arena_core arena_i18n)
+# crypt32: DPAPI (CryptProtectData/CryptUnprotectData) used by keystore.cpp
+# on Windows; the Linux path uses the QSettings fallback and needs nothing.
+target_link_libraries(arena_ai PUBLIC Qt6::Core Qt6::Network arena_core arena_i18n
+    $<$<PLATFORM_ID:Windows>:crypt32>)

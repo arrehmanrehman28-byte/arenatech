@@ -10,6 +10,10 @@
 #include <cmath>
 #include <cstring>
 
+// FFmpeg headers only when the media stack is enabled: the stub path below
+// compiles without FFmpeg (ARENA_ENABLE_FFMPEG=OFF, e.g. the Windows core
+// gate job) and must not require the headers.
+#if ARENA_HAS_FFMPEG
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -21,8 +25,14 @@ extern "C" {
 }
 
 #include "ffmpeg_compat.h"
+#endif // ARENA_HAS_FFMPEG
 
 namespace arena {
+
+// FFmpeg-only helpers. Guarded at namespace scope: with
+// ARENA_ENABLE_FFMPEG=OFF none of the FFmpeg types above exist, and the
+// stub implementations below use none of these helpers.
+#if ARENA_HAS_FFMPEG
 namespace {
 
 qint64 fmtDurationMs(AVFormatContext *fmt)
@@ -96,6 +106,7 @@ qint64 secToStreamTimeBase(double sec, const AVRational &tb)
 }
 
 } // namespace
+#endif // ARENA_HAS_FFMPEG
 
 // --- MediaProbe ---------------------------------------------------------------
 
@@ -163,6 +174,7 @@ bool VideoDecoder::open(const QString &path, QString *err)
 {
     close();
 #if !ARENA_HAS_FFMPEG
+    Q_UNUSED(path);
     Q_UNUSED(err);
     return false;
 #else
@@ -232,6 +244,9 @@ void VideoDecoder::close()
     m_fps = 0.0;
 }
 
+// FFmpeg-only decoder plumbing (the guarded members above/below are the
+// OFF-path entry points; these are never reached when ARENA_ENABLE_FFMPEG=OFF).
+#if ARENA_HAS_FFMPEG
 int VideoDecoder::readVideoPacket()
 {
     // 0 = a video packet was fed to the decoder;
@@ -264,6 +279,7 @@ bool VideoDecoder::convertFrame(QImage *out, double *ptsOut)
     av_frame_unref(frame);
     return !out->isNull();
 }
+#endif // ARENA_HAS_FFMPEG
 
 bool VideoDecoder::nextFrame(QImage *out, double *ptsOut)
 {
@@ -297,6 +313,7 @@ bool VideoDecoder::nextFrame(QImage *out, double *ptsOut)
 bool VideoDecoder::frameAtSec(double sec, QImage *out, double *ptsOut)
 {
 #if !ARENA_HAS_FFMPEG
+    Q_UNUSED(sec);
     Q_UNUSED(out);
     Q_UNUSED(ptsOut);
     return false;
@@ -330,6 +347,7 @@ bool AudioReader::open(const QString &path, QString *err)
 {
     close();
 #if !ARENA_HAS_FFMPEG
+    Q_UNUSED(path);
     Q_UNUSED(err);
     return false;
 #else
@@ -403,6 +421,10 @@ void AudioReader::setOutput(int sampleRate, int channels)
     m_outChannels = channels;
 }
 
+// FFmpeg-only resampler/decoder plumbing (never reached when
+// ARENA_ENABLE_FFMPEG=OFF; the OFF path's open() rejects before any of
+// this is invoked).
+#if ARENA_HAS_FFMPEG
 bool AudioReader::ensureResampler()
 {
     auto *frame = static_cast<AVFrame *>(m_frame);
@@ -451,6 +473,7 @@ int AudioReader::readAudioPacket()
         av_packet_unref(pkt);
     }
 }
+#endif // ARENA_HAS_FFMPEG
 
 int AudioReader::readInterleaved(float *buf, int maxSamples)
 {

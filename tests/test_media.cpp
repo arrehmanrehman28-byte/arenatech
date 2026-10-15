@@ -11,7 +11,11 @@
 
 using namespace arena;
 
-#if defined(ARENA_TEST_FIXTURES)
+// The MediaM1 suite drives the real FFmpeg pipeline; it only exists when
+// the media stack is built with FFmpeg (ARENA_HAS_FFMPEG is a PUBLIC
+// compile definition of arena_media). Other suites still use
+// ARENA_TEST_FIXTURES for file-level probes and the STT fixture.
+#if defined(ARENA_TEST_FIXTURES) && defined(ARENA_HAS_FFMPEG)
 // M1: real FFmpeg pipeline against the shipped fixtures (tests/fixtures/).
 
 TEST(MediaM1, ProbeFullVideoAndAudio)

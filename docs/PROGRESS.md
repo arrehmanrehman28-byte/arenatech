@@ -3,6 +3,46 @@
 *Verified-phase log (working rule #2). Every entry: build clean (zero
 warnings) → tests → targeted checks → evidence.*
 
+## 2026-10-15 — M9.18 Windows CI: last two build blockers fixed (FFmpeg-OFF headers, crypt32)
+
+**Context** — remote `main` had advanced to M9.17 via live GitHub-CI
+debugging, but both workflows were still red at HEAD: the
+`release-windows-full` job died at **link** and the `ci` Windows core
+gate at **compile**.
+
+**Blockers fixed**
+
+1. **Core-gate compile (C1083 `libavcodec/avcodec.h`)**:
+   `media/ffmpeg_media.cpp` included the FFmpeg C headers unconditionally
+   although every FFmpeg code path is already per-function guarded with
+   `#if !ARENA_HAS_FFMPEG` stubs. This was the first `ARENA_ENABLE_FFMPEG=OFF`
+   compile in project history (Linux CI always ships FFmpeg; the Windows
+   core gate is the OFF configuration). Fixed by guarding the includes at
+   include scope, plus three more unguarded regions found in the next pass
+   (the anonymous-namespace helper block; `VideoDecoder::readVideoPacket`
+   + `convertFrame`; `AudioReader::ensureResampler` + `readAudioPacket`).
+2. **Release-job link (LNK2019 `CryptProtectData`/`CryptUnprotectData`)**:
+   `ai/keystore.cpp` uses DPAPI on Windows but `crypt32` was never linked.
+   `arena_ai` now carries `$<$<PLATFORM_ID:Windows>:crypt32>` (PUBLIC,
+   propagates to every exe).
+3. **Tests in the FFmpeg-less config**: the `MediaM1` fixture suite
+   (real-pipeline tests) compiled and *failed* in OFF builds (stubs return
+   false). It is now additionally gated on `ARENA_HAS_FFMPEG`
+   (`ARENA_TEST_FIXTURES` stays unconditional — `Stt.TranscribeJfkFixture`
+   still needs it).
+
+**Verified** (Linux; FFmpeg 7.1, 6.x path via `core/ffmpeg_compat.h`):
+
+- ON config: 0 warnings, ctest **113/113**.
+- OFF config (local reproduction of the Windows core gate): 0 warnings,
+  ctest **104/104** (7 MediaM1 tests excluded by design; JFK STT skips
+  without the model).
+- GitHub: both workflows re-run on the pushed commit — results below
+  (updated after the runs complete).
+
+**Note** — workspace re-synced to remote HEAD (M9.17) before this work;
+`/tmp` toolchain restored via `tools/restore_env.py` after a sandbox reset.
+
 ## 2026-10-14 — M9.4–M9.10 GitHub release pipeline: live ✅
 
 **Scope delivered** — project pushed to `arrehmanrehman28-byte/arenatech`
