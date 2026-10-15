@@ -5,8 +5,9 @@
 #define MyAppVersion "0.1.0"
 #define MyAppPublisher "arenatechofficial.pages.dev"
 #define MyAppURL "https://arenatechofficial.pages.dev"
-; Code-signing: set CERT_PATH / CERT_PASSWORD env vars before running iscc
-; for an authenticated build; without them the package is unsigned.
+; Code-signing: tools\release.ps1 sets the SIGN_CMD preprocessor define
+; (via iscc /D) when CERT_PATH + CERT_PASSWORD are present; without a
+; certificate the package is built unsigned (the default).
 
 [Setup]
 ; Stable AppId (GUID) — keep constant across versions so upgrades replace
@@ -34,7 +35,13 @@ MinVersion=10.0
 UninstallDisplayIcon={app}\ArenaEdit.exe
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-SignWithSigntoolEnv=yes
+; Inno signs via the standard Sign= command template. release.ps1 imports
+; the CERT_PATH .pfx into the current user's certificate store and passes
+; /DSIGN_CMD, enabling this line with a signtool /a (select from store)
+; command — no embedded quotes, nothing env-dependent at sign time.
+#ifdef SIGN_CMD
+Sign="{#SIGN_CMD}"
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

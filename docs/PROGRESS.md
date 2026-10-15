@@ -75,6 +75,13 @@ compile, so it keeps peeling the next layer):
   probe checks skipped when the layer is absent — core builds now
   selftest green). Local: ON selftest PASS (17 checks incl. real media
   pipeline), OFF selftest PASS (honest skip), ctest 113/113 + 104/104.
+- Result round 3: **build ~2 min, ctest green, SELFTEST PASS on the
+  Windows runner** (all 15 checks, honest media skip). New failure at the
+  installer: iscc rejected `SignWithSigntoolEnv=yes` — not a real Inno
+  directive (M9.2 invention). **M9.23**: real signing design — `#ifdef
+  SIGN_CMD / Sign="{#SIGN_CMD}"` in package.iss; release.ps1 imports the
+  .pfx into the user store + passes /DSIGN_CMD (signtool /a, no embedded
+  quotes); no cert → unsigned (documented default).
 - Tag `v0.1.0` (pushed to start the first release attempt) sits on the
   pre-utime commit and will be force-moved to the green commit once the
   gate passes.

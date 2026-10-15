@@ -151,7 +151,23 @@ Copy-Item -Recurse (Join-Path $root "i18n") (Join-Path $portable "i18n")
 
 # --- 7. Installer (Inno Setup) --------------------------------------------------
 Write-Host "== installer (iscc) ==" -ForegroundColor Cyan
-& iscc (Join-Path $root "tools\package.iss")
+$issFile = Join-Path $root "tools\package.iss"
+$isccArgs = @($issFile)
+# Optional code signing: package.iss enables its Sign= line only when the
+# SIGN_CMD preprocessor define is present. The .pfx (CERT_PATH) is imported
+# into the current user's store and signtool's /a selects it — this keeps
+# the Sign= template free of embedded quotes (which would corrupt Inno's
+# value parsing if passed through /D). The store should hold only the
+# signing certificate when this runs.
+if ($env:CERT_PATH -and $env:CERT_PASSWORD) {
+    $securePass = ConvertTo-SecureString $env:CERT_PASSWORD -AsPlainText -Force
+    Import-PfxCertificate -FilePath $env:CERT_PATH -CertStoreLocation "Cert:\CurrentUser\My" -Password $securePass | Out-Null
+    $isccArgs = @('/DSIGN_CMD="signtool sign /fd sha256 /a /tr http://timestamp.digicert.com /td sha256 /v $f"', $issFile)
+    Write-Host "   signing with certificate from CERT_PATH"
+} else {
+    Write-Host "   no CERT_PATH/CERT_PASSWORD — building an unsigned installer"
+}
+& iscc @isccArgs
 if ($LASTEXITCODE -ne 0) { throw "iscc failed" }
 
 # --- 8. Zip the portable payload ------------------------------------------------
