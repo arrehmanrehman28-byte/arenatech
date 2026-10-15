@@ -9,7 +9,12 @@
 #include <QFile>
 #include <QSettings>
 #include <QThread>
+#if defined(_WIN32)
+// MSVC/UCRT sets file times via _wutime64 (wchar_t path, 64-bit times).
+#include <sys/utime.h>
+#else
 #include <utime.h>
+#endif
 
 using namespace arena;
 
@@ -35,6 +40,23 @@ SettingsIsolation *g_settings_isolation = [] {
     ::testing::AddGlobalTestEnvironment(env);
     return env;
 }();
+
+// Set both access and modification times on a file (autosave-recovery
+// ordering test). Qt stores paths as UTF-16, which is exactly the wchar_t
+// path type UCRT's _wutime64 expects on Windows.
+bool setMtime(const QString &path, time_t t)
+{
+#if defined(_WIN32)
+    struct _utimbuf ub;
+    ub.modtime = static_cast<_time64_t>(t);
+    ub.actime = static_cast<_time64_t>(t);
+    return _wutime64(reinterpret_cast<const wchar_t *>(path.unicode()), &ub) == 0;
+#else
+    struct utimbuf ub;
+    ub.modtime = ub.actime = t;
+    return utime(path.toUtf8().constData(), &ub) == 0;
+#endif
+}
 } // namespace
 
 TEST(ProjectModel, JsonRoundTrip)
@@ -276,18 +298,11 @@ TEST(Autosave, RecoveryFlow)
         ASSERT_TRUE(f.open(QIODevice::WriteOnly));
         f.write("{}");
     }
-    // POSIX utime (tests run on the Linux CI harness; Windows uses the same
-    // recovery logic): project clearly in the past, autosave "now".
-    {
-        struct utimbuf ub;
-        ub.modtime = ub.actime = time(nullptr) - 3600;
-        ASSERT_EQ(utime(project.toUtf8().constData(), &ub), 0);
-    }
-    {
-        struct utimbuf ub;
-        ub.modtime = ub.actime = time(nullptr);
-        ASSERT_EQ(utime(autoFile.toUtf8().constData(), &ub), 0);
-    }
+    // Deterministic mtimes: project clearly in the past, autosave "now".
+    // (POSIX utime on Linux; UCRT _wutime64 on Windows — same recovery
+    // logic, platform file-time APIs.)
+    ASSERT_TRUE(setMtime(project, time(nullptr) - 3600));
+    ASSERT_TRUE(setMtime(autoFile, time(nullptr)));
     EXPECT_EQ(Autosave::pendingRecovery(project), autoFile);
     Autosave::clearRecovery(project);
     EXPECT_EQ(Autosave::pendingRecovery(project), QString());
