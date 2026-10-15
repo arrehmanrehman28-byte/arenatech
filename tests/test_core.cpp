@@ -9,8 +9,9 @@
 #include <QFile>
 #include <QSettings>
 #include <QThread>
+#include <ctime>
 #if defined(_WIN32)
-// MSVC/UCRT sets file times via _wutime64 (wchar_t path, 64-bit times).
+// UCRT exposes the utime family in <sys/utime.h> (_wutime64, __utimbuf64).
 #include <sys/utime.h>
 #else
 #include <utime.h>
@@ -41,15 +42,16 @@ SettingsIsolation *g_settings_isolation = [] {
     return env;
 }();
 
-// Set both access and modification times on a file (autosave-recovery
-// ordering test). Qt stores paths as UTF-16, which is exactly the wchar_t
-// path type UCRT's _wutime64 expects on Windows.
+// Set a file's modification time (autosave-recovery ordering test).
+// POSIX utime on Linux; UCRT _wutime64 on Windows (Qt's UTF-16 path
+// storage is already the wchar_t path UCRT expects). The recovery logic
+// only compares lastModified(), so the access time is irrelevant.
 bool setMtime(const QString &path, time_t t)
 {
 #if defined(_WIN32)
-    struct _utimbuf ub;
-    ub.modtime = static_cast<_time64_t>(t);
-    ub.actime = static_cast<_time64_t>(t);
+    struct __utimbuf64 ub;
+    ub.modtime = t;
+    ub.actime = t;
     return _wutime64(reinterpret_cast<const wchar_t *>(path.unicode()), &ub) == 0;
 #else
     struct utimbuf ub;
@@ -298,9 +300,8 @@ TEST(Autosave, RecoveryFlow)
         ASSERT_TRUE(f.open(QIODevice::WriteOnly));
         f.write("{}");
     }
-    // Deterministic mtimes: project clearly in the past, autosave "now".
-    // (POSIX utime on Linux; UCRT _wutime64 on Windows — same recovery
-    // logic, platform file-time APIs.)
+    // Deterministic mtimes: project clearly in the past, autosave "now"
+    // (setMtime: POSIX utime / UCRT _wutime64 — see D-051).
     ASSERT_TRUE(setMtime(project, time(nullptr) - 3600));
     ASSERT_TRUE(setMtime(autoFile, time(nullptr)));
     EXPECT_EQ(Autosave::pendingRecovery(project), autoFile);
