@@ -16,6 +16,9 @@ jobs:
   release:
     name: Windows x64 full product
     runs-on: windows-2022
+    # Backstop: cold vcpkg (Qt+FFmpeg+gtest) is ~70 min; warm ~15, plus the
+    # full-media build (whisper.cpp, FFmpeg link) and packaging.
+    timeout-minutes: 120
     env:
       CMAKE_BUILD_TYPE: Release
     steps:

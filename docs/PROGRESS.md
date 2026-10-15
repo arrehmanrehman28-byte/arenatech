@@ -56,12 +56,17 @@ compile, so it keeps peeling the next layer):
   `sttRow`), and **psapi** added to `arena_core` (`GetProcessMemoryInfo`
   in util.cpp had never been linked — the exes had never finished
   linking in CI before).
-- Result: Linux job **GREEN** (zero-warning gate, 113/113, selftest,
-  benchmark, artifact); Windows core gate running the first-ever
-  complete build on a runner (vcpkg binary cache hit in 7 s) — final
-  verdict pending. Tag `v0.1.0` (pushed to start the first release
-  attempt) sits on the pre-utime commit and will be force-moved to the
-  green commit once the gate passes.
+- Result round 1: Linux job **GREEN** (zero-warning gate, 113/113,
+  selftest, benchmark, artifact); Windows gate hung — ctest test #50
+  `BurnIn.UrduBurnInGolden` ran 2+ h with no output (build itself took
+  2 min). Cancelled at 126 min; full log identified the hang (the
+  suite's fontconfig + freetype-golden mechanism is Linux-only, and the
+  headless `QFontDatabase` probe on Windows never returns). **M9.21**:
+  suite gated `#if defined(__linux__)`, `ctest --timeout 300` in both
+  workflows, `timeout-minutes` job backstops.
+- Tag `v0.1.0` (pushed to start the first release attempt) sits on the
+  pre-utime commit and will be force-moved to the green commit once the
+  gate passes.
 
 **Note** — workspace re-synced to remote HEAD (M9.17) before this work;
 `/tmp` toolchain restored via `tools/restore_env.py` after a sandbox reset.

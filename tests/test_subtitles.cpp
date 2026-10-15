@@ -285,9 +285,17 @@ TEST(ProjectModel, SubtitleTrackRoundTripWithCues)
 
 #include "compositor.h"
 
+// --- Subtitle burn-in golden tests (Linux only) ---------------------------------
+// This suite feeds the bundled Noto Sans Arabic fixture font through
+// fontconfig and compares rendered frames pixel-exactly against goldens
+// generated with freetype. Both mechanisms are Linux-environment facts:
+// on Windows the headless QGuiApplication/QFontDatabase path this suite
+// needs hung the CI runner for two hours (M9.21), and DirectWrite would
+// rasterize the same font to different pixels anyway, so the goldens can
+// never match cross-platform.
+#if defined(__linux__)
 #include <QFontDatabase>
 #include <QGuiApplication>
-#include <QStandardPaths>
 #include <QTextStream>
 
 namespace {
@@ -448,3 +456,5 @@ TEST_F(BurnIn, DisabledTrackIsNotBaked)
     // The disabled track leaves the source pixels untouched.
     EXPECT_EQ(off.pixel(320, 300), qRgb(38, 52, 82));
 }
+
+#endif // defined(__linux__)

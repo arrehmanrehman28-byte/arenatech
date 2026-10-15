@@ -19,6 +19,7 @@ jobs:
   linux:
     name: Linux build + tests + benchmark
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -53,7 +54,8 @@ jobs:
 
       - name: Unit tests
         working-directory: build
-        run: ctest --output-on-failure
+        # --timeout: a stuck test must not pin a runner (M9.21).
+        run: ctest --output-on-failure --timeout 300
 
       - name: Headless selftest
         run: |
@@ -86,6 +88,8 @@ jobs:
   windows:
     name: Windows build + package (core gate)
     runs-on: windows-2022
+    # Backstop: vcpkg cold builds can take ~55 min; warm runs are ~15.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 

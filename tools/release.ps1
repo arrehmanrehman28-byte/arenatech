@@ -90,7 +90,9 @@ if ($LASTEXITCODE -ne 0) { throw "build failed" }
 if (-not $SkipTests) {
     Write-Host "== tests ==" -ForegroundColor Cyan
     Push-Location $buildDir
-    ctest --output-on-failure
+    # --timeout: a single stuck test must not pin a runner for hours
+    # (M9.21: a headless font query hung a Windows run for 2h).
+    ctest --output-on-failure --timeout 300
     $code = $LASTEXITCODE
     Pop-Location
     if ($code -ne 0) { throw "tests failed" }
