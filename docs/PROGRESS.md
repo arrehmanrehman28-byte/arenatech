@@ -82,6 +82,13 @@ compile, so it keeps peeling the next layer):
   SIGN_CMD / Sign="{#SIGN_CMD}"` in package.iss; release.ps1 imports the
   .pfx into the user store + passes /DSIGN_CMD (signtool /a, no embedded
   quotes); no cert → unsigned (documented default).
+- Result round 4: selftest PASS again; iscc now compiles the script
+  (the `#ifdef` signing gate works) but fails on paths — Inno resolves
+  `Source:`/`OutputDir` relative to the **script directory** (`tools\`),
+  so `dist\portable\*` looked in `tools\dist\`. Latent since M9.2 (no
+  run ever reached iscc). **M9.24**: `..\dist\portable\*` +
+  `OutputDir=..\dist` (matches release.ps1 staging + ci.yml artifact
+  globs; `SetupIconFile` was already correctly `..\`).
 - Tag `v0.1.0` (pushed to start the first release attempt) sits on the
   pre-utime commit and will be force-moved to the green commit once the
   gate passes.

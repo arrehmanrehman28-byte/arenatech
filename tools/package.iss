@@ -22,7 +22,10 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\ArenaEdit
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputDir=dist
+; Inno resolves relative paths against the script's directory (tools\),
+; so the repo-root dist\ is ..\dist — release.ps1 stages the portable
+; payload there and ci.yml collects artifacts from it.
+OutputDir=..\dist
 OutputBaseFilename=ArenaEdit-{#MyAppVersion}-Setup
 Compression=lzma2
 SolidCompression=yes
@@ -52,7 +55,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 ; Portable payload: ArenaEdit.exe + Qt/FFmpeg DLLs + assets. The build script
 ; stages this folder; keep it a single directory so the exe stays relocatable.
-Source: "dist\portable\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\portable\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\ArenaEdit.exe"
