@@ -130,3 +130,34 @@ if(ARENA_BUILD_TESTS)
     find_package(GTest REQUIRED)
     add_subdirectory(tests)
 endif()
+
+# --- Windows runtime DLL staging -------------------------------------------------
+# vcpkg's automatic post-build copy misses transitive dependencies
+# (Qt6Widgets, libssl, ...) and build-time test discovery
+# (gtest_discover_tests) cannot rely on PATH. Stage the complete vcpkg
+# triplet bin/*.dll set next to every executable so each exe is
+# self-contained in the build tree (also simplifies portable packaging).
+if(WIN32 AND TARGET Qt6::Core)
+    get_target_property(_arena_qt_core_loc Qt6::Core IMPORTED_LOCATION_RELEASE)
+    if(NOT _arena_qt_core_loc)
+        get_target_property(_arena_qt_core_loc Qt6::Core IMPORTED_LOCATION)
+    endif()
+    if(_arena_qt_core_loc)
+        get_filename_component(_arena_vcpkg_bin "${_arena_qt_core_loc}" DIRECTORY)
+        file(GLOB _arena_runtime_dlls "${_arena_vcpkg_bin}/*.dll")
+        function(arena_stage_runtime_dlls target)
+            foreach(_arena_dll IN LISTS _arena_runtime_dlls)
+                add_custom_command(TARGET ${target} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${_arena_dll}" "$<TARGET_FILE_DIR:${target}>"
+                    VERBATIM)
+            endforeach()
+        endfunction()
+        foreach(_arena_exe arenaedit arena_ai_live arena_stt_check
+                            arena_export_bench arena_tests arena_guismoke)
+            if(TARGET ${_arena_exe})
+                arena_stage_runtime_dlls(${_arena_exe})
+            endif()
+        endforeach()
+    endif()
+endif()

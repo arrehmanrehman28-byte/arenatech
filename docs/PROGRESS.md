@@ -89,9 +89,43 @@ compile, so it keeps peeling the next layer):
   run ever reached iscc). **M9.24**: `..\dist\portable\*` +
   `OutputDir=..\dist` (matches release.ps1 staging + ci.yml artifact
   globs; `SetupIconFile` was already correctly `..\`).
-- Tag `v0.1.0` (pushed to start the first release attempt) sits on the
-  pre-utime commit and will be force-moved to the green commit once the
-  gate passes.
+- Result round 5: the gate reached the runner's Inno and died on
+  `WizardSmallCaptionLabel` — an identifier the image's pre-6.3 Inno
+  doesn't know (M9.10's "Inno 6.7.1 bundled" note was wrong). **M9.25**:
+  the whole `[Code]` section removed (the credit tweak is cosmetic;
+  credit stays with AppPublisher/AppPublisherURL, the About dialog, and
+  the portable launcher). Pushed as `4bd1a35` — **CI fully green:
+  first-ever success of the Windows core gate** (build ~2 min, ctest
+  green, SELFTEST PASS, stage, iscc, zip) and the Linux job green.
+- Tag `v0.1.0` force-moved onto the green commit `4bd1a35` → first
+  `release-windows-full` attempt (run 38795270722). Build itself was
+  healthy (vcpkg cached, whisper + ggml compiled, 130 ninja targets),
+  but it died at **build-time test discovery**: `gtest_discover_tests`
+  executes `arena_tests.exe` during the build and it exited
+  `0xc0000135` (STATUS_DLL_NOT_FOUND). Root cause: vcpkg's automatic
+  post-build DLL copy only stages the DLLs of **directly imported**
+  targets — it missed `Qt6Widgets.dll` (direct import via
+  arena_app_theme → Qt6::Widgets) and `libssl-3-x64.dll` (Qt6Network
+  transitive). The core gate survived the same gap only because the
+  workflow puts vcpkg's bin on PATH; discovery on a bare PATH can't be
+  relied on. The same gap also meant the staged portable payload was
+  missing ICU/OpenSSL/FFmpeg transitive DLLs AND — worse — the Qt
+  **platform plugin** (`platforms\qwindows.dll` lives in vcpkg's
+  `plugins\` tree, never next to the exe): the packaged GUI could not
+  have started on a clean machine.
+- **M9.26** (two changes): (1) root CMakeLists now stages the
+  *complete* vcpkg triplet `bin\*.dll` set next to **every** executable
+  (arenaedit, arena_ai_live, arena_stt_check, arena_export_bench,
+  arena_tests, arena_guismoke) via per-DLL `copy_if_different`
+  POST_BUILD commands — exes are self-contained in the build tree, so
+  discovery, ctest, and selftest no longer depend on PATH; the vcpkg
+  bin dir is derived from `Qt6::Core`'s import location (no env
+  assumptions). (2) release.ps1 staging now copies the complete DLL
+  set flat from the exe's directory (replacing the `Qt6|MSVCP|...`
+  name filter) and explicitly installs the platform plugin from
+  `<vcpkg>\installed\x64-windows\plugins\platforms\qwindows.dll` into
+  `platforms\` next to the exe — with a hard failure if the plugin
+  cannot be found, so a start-unable package can never ship silently.
 
 **Note** — workspace re-synced to remote HEAD (M9.17) before this work;
 `/tmp` toolchain restored via `tools/restore_env.py` after a sandbox reset.

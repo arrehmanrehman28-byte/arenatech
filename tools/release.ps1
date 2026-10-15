@@ -106,10 +106,14 @@ Write-Host "== selftest: $($exe.FullName) ==" -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) { throw "selftest failed" }
 
 # --- 6. Stage the portable payload ---------------------------------------------
-# Critical: Qt runtime DLLs must keep their directory structure (the Windows
-# platform plugin lives at platforms\qwindows.dll relative to the exe — a flat
-# copy makes the exe fail to start). So every DLL found under the build tree is
-# copied with its relative path preserved.
+# Runtime DLLs: CMake's post-build step already staged the COMPLETE runtime
+# set next to ArenaEdit.exe in the build tree (Qt + ICU + OpenSSL + FFmpeg +
+# gtest, including the transitive DLLs that vcpkg's own auto-copy misses —
+# Qt6Widgets, libssl, ...). Copy that set flat into the portable root.
+#
+# The one exception is the Qt platform plugin: vcpkg keeps it under
+# <triplet>\plugins\platforms, OUTSIDE bin/. Qt refuses to start without it,
+# so it is copied explicitly to platforms\qwindows.dll relative to the exe.
 Write-Host "== stage portable -> $portable ==" -ForegroundColor Cyan
 if (Test-Path $portable) { Remove-Item $portable -Recurse -Force }
 New-Item -ItemType Directory -Force $portable | Out-Null
@@ -124,19 +128,31 @@ start "" "ArenaEdit.exe"
 "@
 Set-Content -Path (Join-Path $portable "Run Arena Edit.bat") -Value $runBat -Encoding ASCII
 
-$dlls = Get-ChildItem -Path $buildDir -Recurse -Filter "*.dll" | Where-Object {
-    $_.FullName -notmatch "\\CMakeFiles\\" -and $_.Name -match "Qt6|MSVCP|VCRUNTIME|concrt|vcruntime"
+$exeDir = Split-Path $exe.FullName
+$dlls = Get-ChildItem $exeDir -Filter "*.dll"
+foreach ($d in $dlls) { Copy-Item $d.FullName $portable }
+
+# Qt platform plugin (required at runtime; lives outside vcpkg's bin/).
+$qwin = $null
+$qwinCands = @()
+if ($env:VCPKG_ROOT) {
+    $qwinCands += Join-Path $env:VCPKG_ROOT "installed\x64-windows\plugins\platforms\qwindows.dll"
+    $qwinCands += Join-Path $env:VCPKG_ROOT "vcpkg_installed\x64-windows\plugins\platforms\qwindows.dll"
 }
-foreach ($d in $dlls) {
-    $rel = $d.FullName.Substring($buildDir.Length).TrimStart('\')
-    $dest = Join-Path $portable $rel
-    New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
-    Copy-Item $d.FullName $dest
+if ($FfmpegDir) { $qwinCands += Join-Path (Split-Path $FfmpegDir) "plugins\platforms\qwindows.dll" }
+foreach ($c in $qwinCands) { if (Test-Path $c) { $qwin = $c; break } }
+if ($qwin) {
+    New-Item -ItemType Directory -Force (Join-Path $portable "platforms") | Out-Null
+    Copy-Item $qwin (Join-Path $portable "platforms\qwindows.dll")
+} else {
+    throw "Qt platform plugin qwindows.dll not found (VCPKG_ROOT='$($env:VCPKG_ROOT)', FfmpegDir='$FfmpegDir') — the portable GUI would not start."
 }
+
 $qtDllCount = (Get-ChildItem $portable -Recurse -Filter "*.dll").Count
 Write-Host "   staged $qtDllCount runtime DLLs (incl. platforms\qwindows.dll: $(Test-Path (Join-Path $portable 'platforms\qwindows.dll')))"
 
-# FFmpeg runtime DLLs (flat layout, from the provided prefix).
+# FFmpeg runtime DLLs (custom prefix only — with vcpkg they already landed
+# next to the exe via the CMake staging step; the copy is then a no-op).
 if ($WithMedia) {
     $ffBin = Join-Path $FfmpegDir "bin"
     if (-not (Test-Path $ffBin)) { throw "FFmpeg prefix bin/ not found: $ffBin" }
