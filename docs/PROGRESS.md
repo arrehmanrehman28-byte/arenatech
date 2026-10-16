@@ -164,7 +164,24 @@ compile, so it keeps peeling the next layer):
   gated to Linux like the BurnIn suite (Windows full: 109→107 tests;
   the GUI keeps its real validation on Linux, per D-053).
 
-- **M9.26** (three changes): (1) **whisper/ggml forced static,- **M9.26** (three changes): (1) **whisper/ggml forced static,- **M9.26** (three changes): (1) **whisper/ggml forced static,
+- Result round 9 (run 38865663393, after M9.30): **100% — 107/107
+  tests green, SELFTEST PASS** (x264/vpx/opus all present; guismoke no
+  longer in the Windows matrix). First failure ever at the packaging
+  stage — and it was our own guard: the new staging hard-failed with
+  `Qt platform plugin qwindows.dll not found`, because none of the
+  guessed vcpkg paths existed (vcpkg's qtbase port does not lay the
+  plugins under `<triplet>\plugins`). Reading the port file showed the
+  real answer: **vcpkg ships `windeployqt` under
+  `<triplet>\tools\Qt6\bin`** — the official Qt runtime collector
+  that copies the Qt DLLs, their full transitive closure (ICU,
+  OpenSSL, freetype, ...), the TLS backends, and the platform plugin
+  into the correct `platforms\` layout. **M9.31**: staging now runs
+  windeployqt (located via $FfmpegDir/<triplet>/tools, with
+  VCPKG_ROOT fallbacks) instead of hand-rolling DLL paths; the
+  qwindows hard-fail is kept as post-verification, FFmpeg/encoder DLLs
+  are copied from the prefix bin/ (windeployqt only knows Qt imports).
+
+- **M9.26** (three changes): (1) **whisper/ggml forced static,- **M9.26** (three changes): (1) **whisper/ggml forced static,- **M9.26** (three changes): (1) **whisper/ggml forced static,- **M9.26** (three changes): (1) **whisper/ggml forced static,
   policy-proof**: `set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)`
   before `add_subdirectory(third_party/whisper)` — the OLD-policy
   `option()` only creates a cache entry when one is *missing*, so the

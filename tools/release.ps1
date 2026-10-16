@@ -106,14 +106,11 @@ Write-Host "== selftest: $($exe.FullName) ==" -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) { throw "selftest failed" }
 
 # --- 6. Stage the portable payload ---------------------------------------------
-# Runtime DLLs: CMake's post-build step already staged the COMPLETE runtime
-# set next to ArenaEdit.exe in the build tree (Qt + ICU + OpenSSL + FFmpeg +
-# gtest, including the transitive DLLs that vcpkg's own auto-copy misses —
-# Qt6Widgets, libssl, ...). Copy that set flat into the portable root.
-#
-# The one exception is the Qt platform plugin: vcpkg keeps it under
-# <triplet>\plugins\platforms, OUTSIDE bin/. Qt refuses to start without it,
-# so it is copied explicitly to platforms\qwindows.dll relative to the exe.
+# The Qt runtime is collected with **windeployqt** (vcpkg ships it under
+# <triplet>\tools\Qt6\bin): it copies the Qt DLLs, their FULL transitive
+# closure (ICU, OpenSSL, freetype, ...), and — crucially — the platform
+# plugin to platforms\qwindows.dll, which vcpkg keeps OUTSIDE bin\ (a naive
+# DLL copy always misses it, and the app cannot start without it).
 Write-Host "== stage portable -> $portable ==" -ForegroundColor Cyan
 if (Test-Path $portable) { Remove-Item $portable -Recurse -Force }
 New-Item -ItemType Directory -Force $portable | Out-Null
@@ -128,37 +125,37 @@ start "" "ArenaEdit.exe"
 "@
 Set-Content -Path (Join-Path $portable "Run Arena Edit.bat") -Value $runBat -Encoding ASCII
 
-$exeDir = Split-Path $exe.FullName
-$dlls = Get-ChildItem $exeDir -Filter "*.dll"
-foreach ($d in $dlls) { Copy-Item $d.FullName $portable }
-
-# Qt platform plugin (required at runtime; lives outside vcpkg's bin/).
-$qwin = $null
-$qwinCands = @()
+# Locate windeployqt in the vcpkg tree ($FfmpegDir IS the triplet dir).
+$wdq = $null
+$wdqCands = @()
+if ($FfmpegDir) { $wdqCands += Join-Path $FfmpegDir "tools\Qt6\bin\windeployqt.exe" }
 if ($env:VCPKG_ROOT) {
-    $qwinCands += Join-Path $env:VCPKG_ROOT "installed\x64-windows\plugins\platforms\qwindows.dll"
-    $qwinCands += Join-Path $env:VCPKG_ROOT "vcpkg_installed\x64-windows\plugins\platforms\qwindows.dll"
+    $wdqCands += Join-Path $env:VCPKG_ROOT "installed\x64-windows\tools\Qt6\bin\windeployqt.exe"
+    $wdqCands += Join-Path $env:VCPKG_ROOT "vcpkg_installed\x64-windows\tools\Qt6\bin\windeployqt.exe"
 }
-if ($FfmpegDir) { $qwinCands += Join-Path (Split-Path $FfmpegDir) "plugins\platforms\qwindows.dll" }
-foreach ($c in $qwinCands) { if (Test-Path $c) { $qwin = $c; break } }
-if ($qwin) {
-    New-Item -ItemType Directory -Force (Join-Path $portable "platforms") | Out-Null
-    Copy-Item $qwin (Join-Path $portable "platforms\qwindows.dll")
-} else {
-    throw "Qt platform plugin qwindows.dll not found (VCPKG_ROOT='$($env:VCPKG_ROOT)', FfmpegDir='$FfmpegDir') — the portable GUI would not start."
+foreach ($c in $wdqCands) { if (Test-Path $c) { $wdq = $c; break } }
+if (-not $wdq) {
+    throw "windeployqt.exe not found (VCPKG_ROOT='$($env:VCPKG_ROOT)', FfmpegDir='$FfmpegDir') — cannot stage the Qt runtime."
+}
+Write-Host "   windeployqt: $wdq"
+& $wdq --release --no-translations --dir $portable (Join-Path $portable "ArenaEdit.exe")
+if ($LASTEXITCODE -ne 0) { throw "windeployqt failed (rc=$LASTEXITCODE)" }
+if (-not (Test-Path (Join-Path $portable "platforms\qwindows.dll"))) {
+    throw "platforms\qwindows.dll missing after windeployqt — the portable GUI would not start."
 }
 
 $qtDllCount = (Get-ChildItem $portable -Recurse -Filter "*.dll").Count
 Write-Host "   staged $qtDllCount runtime DLLs (incl. platforms\qwindows.dll: $(Test-Path (Join-Path $portable 'platforms\qwindows.dll')))"
 
-# FFmpeg runtime DLLs (custom prefix only — with vcpkg they already landed
-# next to the exe via the CMake staging step; the copy is then a no-op).
+# FFmpeg + encoder DLLs (not Qt dependencies, so windeployqt doesn't see
+# them; with vcpkg they also sit next to the exe via the CMake staging
+# step, but the canonical source is the prefix bin/).
 if ($WithMedia) {
     $ffBin = Join-Path $FfmpegDir "bin"
     if (-not (Test-Path $ffBin)) { throw "FFmpeg prefix bin/ not found: $ffBin" }
     Copy-Item (Join-Path $ffBin "*.dll") $portable
     $ffCount = (Get-ChildItem $portable -Filter "av*.dll").Count + (Get-ChildItem $portable -Filter "sw*.dll").Count
-    Write-Host "   staged FFmpeg DLLs: $ffCount"
+    Write-Host "   staged FFmpeg DLLs: $ffCount (x264/vpx/opus included)"
 }
 
 # App data: assets (theme, sample project, icon) + i18n catalogs.
