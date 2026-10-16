@@ -47,3 +47,10 @@ if(ARENA_ENABLE_FFMPEG AND EXISTS "${CMAKE_SOURCE_DIR}/tests/fixtures/clip01.mp4
              COMMAND arena_guismoke --soak 30 "${CMAKE_SOURCE_DIR}/tests/fixtures")
     set_tests_properties(Guismoke.Soak PROPERTIES TIMEOUT 120)
 endif()
+
+# Windows: stage the complete runtime DLL set next to the test exes
+# (setup in the top-level CMakeLists) so build-time test discovery
+# (gtest_discover_tests) and ctest never depend on PATH.
+if(COMMAND arena_stage_exes)
+    arena_stage_exes(arena_tests arena_guismoke)
+endif()

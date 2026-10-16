@@ -33,6 +33,11 @@ target_compile_definitions(arena_app_lib PUBLIC
 )
 
 add_executable(arenaedit main.cpp)
+# Windows: stage the complete runtime DLL set next to the exe (setup in
+# the top-level CMakeLists) so the app is self-contained in the build tree.
+if(COMMAND arena_stage_exes)
+    arena_stage_exes(arenaedit)
+endif()
 target_link_libraries(arenaedit PRIVATE arena_app_lib)
 # App icon: embedded PNG for the Qt window icon (all platforms)...
 target_sources(arenaedit PRIVATE app.qrc)
