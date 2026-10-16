@@ -51,7 +51,10 @@ jobs:
             Write-Host "Using pre-installed vcpkg at $root"
           }
           Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_ROOT=$root"
-          & "$root\vcpkg.exe" install qtbase:x64-windows ffmpeg:x64-windows gtest:x64-windows
+          # x264+vpx features: H.264 and VP9 are product export formats; the
+          # default (LGPL) FFmpeg build ships NO h264 encoder at all (the
+          # native FFmpeg build has no software H.264 encoder) and no VP9.
+          & "$root\vcpkg.exe" install qtbase:x64-windows ffmpeg[x264,vpx]:x64-windows gtest:x64-windows
 
       - name: Save vcpkg binary cache
         if: always()

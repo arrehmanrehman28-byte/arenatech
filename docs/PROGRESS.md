@@ -124,7 +124,32 @@ compile, so it keeps peeling the next layer):
   plugin** (`platforms\qwindows.dll` lives in vcpkg's `plugins\` tree,
   never next to the exe): even once discovery passes, the packaged GUI
   could not have started on a clean machine.
-- **M9.26** (three changes): (1) **whisper/ggml forced static,
+- Result round 6 (run 38859435036): M9.26's top-level staging block died
+  at the first Windows configure of it — `add_custom_command(TARGET …)`
+  may only attach to targets created **in the current directory**
+  ("TARGET 'arenaedit' was not created in this directory"); it never
+  showed locally because the block is `if(WIN32)` and the sandbox is
+  Linux. **M9.28**: the helper is defined at top level but *called*
+  from `app/`, `tools/`, `tests/` where each exe is created; this also
+  dropped an invented `foreach(… IN ARGUMENTS)` form (not real CMake —
+  caught by a minimal local repro, valid forms are `IN ITEMS/LISTS/
+  VALUES`, function args via `ARGN`). Pattern proven with a
+  cross-directory repro (configure clean + DLL lands next to the exe).
+- Result round 7 (run 38859435036, after M9.28): **configure passed,
+  build compiled, discovery passed (the 0xc0000135 is gone), ctest ran
+  to completion: 101/109 green, 361 s.** All 8 failures are one bug:
+  `no usable h264 encoder in this build` — the vcpkg **LGPL-default**
+  FFmpeg ships no H.264 encoder (FFmpeg has no native software H.264
+  encoder; encoding needs libx264) and no VP9 (needs libvpx), while
+  H.264/VP9 are product export formats and the test suite covers both
+  (`BatchThreePresets` = mp4-h264-high/balanced + webm-vp9). This is
+  the first Windows FFmpeg-ON run to ever reach ctest, so the gap was
+  invisible until now. **M9.29**: release workflow installs
+  `ffmpeg[x264,vpx]:x64-windows` (x264 BSL / libvpx BSD-3, separate
+  DLLs — recorded in THIRD_PARTY.md); the runtime-staging glob picks
+  the new DLLs up automatically.
+
+- **M9.26** (three changes): (1) **whisper/ggml forced static,- **M9.26** (three changes): (1) **whisper/ggml forced static,
   policy-proof**: `set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)`
   before `add_subdirectory(third_party/whisper)` — the OLD-policy
   `option()` only creates a cache entry when one is *missing*, so the
