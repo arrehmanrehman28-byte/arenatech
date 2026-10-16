@@ -6,6 +6,7 @@
 | FFmpeg | not linked in M0 (M1, LGPL build, dynamic DLLs) | demux/decode/encode, HW accel | **LGPL 2.1** (with GPL components excluded) |
 | x264 (libx264.dll, vcpkg `ffmpeg[x264]`) | M9.29, Windows release build | H.264 export (the LGPL FFmpeg default has no H.264 encoder) | **BSL 1.0** (separate DLL, dynamically linked) |
 | libvpx (libvpx.dll, vcpkg `ffmpeg[vpx]`) | M9.29, Windows release build | VP9/WebM export | **BSD-3** (separate DLL, dynamically linked) |
+| Opus (libopus.dll, vcpkg `ffmpeg[opus]`) | M9.30, Windows release build | Opus audio in WebM export | **BSD-2** (separate DLL, dynamically linked) |
 | whisper.cpp | not linked in M0 (M7, on-demand models) | local speech-to-text | **MIT** |
 | GoogleTest | 1.16 | unit tests (test-only, not shipped) | **BSD-3-Clause** |
 | Inno Setup | 6 (packaging tool, not shipped) | installer | **Inno Setup License** (freeware) |

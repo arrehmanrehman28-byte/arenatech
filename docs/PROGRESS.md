@@ -149,7 +149,22 @@ compile, so it keeps peeling the next layer):
   DLLs — recorded in THIRD_PARTY.md); the runtime-staging glob picks
   the new DLLs up automatically.
 
-- **M9.26** (three changes): (1) **whisper/ggml forced static,- **M9.26** (three changes): (1) **whisper/ggml forced static,
+- Result round 8 (run 38860511730, after M9.29): **x264 fix landed —
+  96% (105/109), failures 8→4.** Two distinct remaining bugs:
+  (a) `webm-vp9 failed: no usable opus audio encoder` — same gap class:
+  FFmpeg has no native Opus encoder either (the WebM preset's audio
+  codec); fixed by adding the `opus` feature (libopus, BSD-2).
+  (b) `Guismoke.MediaPipeline`/`Guismoke.Soak` **time out at exactly
+  the ctest limit in every Windows full run** — the established
+  D-053 behavior (constructing any QApplication, even offscreen,
+  hangs on the Windows runners) hitting a target nobody had gated:
+  guismoke's CMake condition only checked FFmpeg + fixture presence,
+  not platform, so it built AND ran on Windows where its real
+  QApplication + MainWindow can never come up. **M9.30**: guismoke
+  gated to Linux like the BurnIn suite (Windows full: 109→107 tests;
+  the GUI keeps its real validation on Linux, per D-053).
+
+- **M9.26** (three changes): (1) **whisper/ggml forced static,- **M9.26** (three changes): (1) **whisper/ggml forced static,- **M9.26** (three changes): (1) **whisper/ggml forced static,
   policy-proof**: `set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)`
   before `add_subdirectory(third_party/whisper)` — the OLD-policy
   `option()` only creates a cache entry when one is *missing*, so the

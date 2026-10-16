@@ -35,7 +35,12 @@ gtest_discover_tests(arena_tests)
 
 # Headless GUI smoke: full M1 pipeline through the real MainWindow.
 # Runs on the offscreen platform; needs a real video fixture.
-if(ARENA_ENABLE_FFMPEG AND EXISTS "${CMAKE_SOURCE_DIR}/tests/fixtures/clip01.mp4")
+# Linux-only (D-052/D-053): constructing ANY QApplication object — even
+# offscreen — hangs indefinitely on the Windows CI runners, so this
+# target (which builds a real QApplication + MainWindow) can only run
+# where a display subsystem works headless.
+if(ARENA_ENABLE_FFMPEG AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
+    AND EXISTS "${CMAKE_SOURCE_DIR}/tests/fixtures/clip01.mp4")
     add_executable(arena_guismoke guismoke.cpp)
     target_link_libraries(arena_guismoke PRIVATE arena_app_lib)
     add_test(NAME Guismoke.MediaPipeline
